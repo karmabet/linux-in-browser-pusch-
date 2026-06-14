@@ -23,17 +23,16 @@ export default function App() {
   
   const emulatorRef = useRef<any>(null);
 
-  // Load expected libraries
+// Load expected libraries
   useEffect(() => {
-    if (window.V86 || window.V86Starter) {
-      setV86Loaded(true);
-      return;
-    }
-    const script = document.createElement('script');
-    script.src = "https://unpkg.com/v86/build/libv86.js";
-    script.async = true;
-    script.onload = () => setV86Loaded(true);
-    document.body.appendChild(script);
+    // libv86.js is included in index.html
+    const checkV86 = setInterval(() => {
+      if (window.V86) {
+        setV86Loaded(true);
+        clearInterval(checkV86);
+      }
+    }, 100);
+    return () => clearInterval(checkV86);
   }, []);
 
   // Recalculate zoom whenever running state changes or resize
@@ -98,8 +97,10 @@ export default function App() {
   };
 
   const startV86 = useCallback((memory: number) => {
-      const V86Constructor = window.V86 || window.V86Starter;
-      if (!V86Constructor) return;
+      if (!window.V86) {
+          console.error("V86 not loaded. Cannot start virtual machine.");
+          return;
+      }
       
       setSystemState('loading');
       setProgress(0);
@@ -114,7 +115,7 @@ export default function App() {
           if (textFallbackRef.current) textFallbackRef.current.innerHTML = '';
 
           try {
-              emulatorRef.current = new V86Constructor({
+              emulatorRef.current = new window.V86({
                   wasm_path: "https://unpkg.com/v86/build/v86.wasm",
                   memory_size: memory * 1024 * 1024,
                   vga_memory_size: 8 * 1024 * 1024,
@@ -128,6 +129,7 @@ export default function App() {
               const emu = emulatorRef.current;
 
               emu.add_listener("download-progress", (e: any) => {
+                  console.log("Loading:", e);
                   if (e && typeof e.loaded === 'number' && e.total > 0) {
                       const p = Math.min(100, Math.round((e.loaded / e.total) * 100));
                       setProgress(p);
@@ -137,7 +139,10 @@ export default function App() {
                   }
               });
 
-              emu.add_listener("emulator-ready", () => setSystemState('running'));
+              emu.add_listener("emulator-ready", () => {
+                  console.log("VM ready");
+                  setSystemState('running');
+              });
               emu.add_listener("emulator-started", () => setSystemState('running'));
 
           } catch (err) {
@@ -201,44 +206,49 @@ export default function App() {
          onKeyDown={handleMobileKeyDown}
       />
 
-      {systemState === 'dashboard' ? (
-          <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#050505] text-slate-300 p-4">
-               <div className="max-w-md w-full bg-[#111] border border-white/10 rounded-xl p-8 shadow-2xl flex flex-col items-center">
-                   <div className="w-20 h-20 bg-white/5 rounded-full flex items-center justify-center mb-6 border border-white/10 shadow-[0_0_30px_rgba(255,255,255,0.05)]">
-                        <Monitor className="w-10 h-10 text-slate-300" />
-                   </div>
-                   <h1 className="text-3xl font-bold text-white mb-2 tracking-tight">v86 Emulator</h1>
-                   <p className="text-slate-400 text-center mb-8 text-sm">
-                       Run a full x86-64 Linux environment natively in your browser.
-                   </p>
-        
-                   <div className="w-full mb-8">
-                       <label className="text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-3 block text-center">Memory Allocation (RAM)</label>
-                       <div className="flex gap-2">
-                           {[128, 256, 512].map(m => (
-                               <button
-                                   key={m}
-                                   onClick={() => setRam(m)}
-                                   className={`flex-1 py-2.5 text-sm font-mono rounded border transition-all ${ram === m ? 'bg-white/10 border-white/30 text-white shadow-inner' : 'bg-transparent border-white/5 text-slate-500 hover:bg-white/5 hover:text-slate-300'}`}
-                               >
-                                   {m} MB
-                               </button>
-                           ))}
-                       </div>
-                   </div>
-        
-                   <button
-                       disabled={!v86Loaded}
-                       onClick={() => startV86(ram)}
-                       className="w-full py-4 bg-white text-black font-bold rounded flex items-center justify-center gap-2 hover:bg-slate-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-sm uppercase tracking-widest"
-                   >
-                       <Play className="w-4 h-4 fill-current" />
-                       Start Virtual Machine
-                   </button>
+      <div 
+        className="absolute inset-0 flex flex-col items-center justify-center bg-[#050505] text-slate-300 p-4"
+        style={{ display: systemState === 'dashboard' ? 'flex' : 'none' }}
+      >
+           <div className="max-w-md w-full bg-[#111] border border-white/10 rounded-xl p-8 shadow-2xl flex flex-col items-center">
+               <div className="w-20 h-20 bg-white/5 rounded-full flex items-center justify-center mb-6 border border-white/10 shadow-[0_0_30px_rgba(255,255,255,0.05)]">
+                    <Monitor className="w-10 h-10 text-slate-300" />
                </div>
-          </div>
-      ) : (
-          <div className="flex-1 flex flex-col w-full h-full bg-[#000] relative">
+               <h1 className="text-3xl font-bold text-white mb-2 tracking-tight">v86 Emulator</h1>
+               <p className="text-slate-400 text-center mb-8 text-sm">
+                   Run a full x86-64 Linux environment natively in your browser.
+               </p>
+    
+               <div className="w-full mb-8">
+                   <label className="text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-3 block text-center">Memory Allocation (RAM)</label>
+                   <div className="flex gap-2">
+                       {[128, 256, 512].map(m => (
+                           <button
+                               key={m}
+                               onClick={() => setRam(m)}
+                               className={`flex-1 py-2.5 text-sm font-mono rounded border transition-all ${ram === m ? 'bg-white/10 border-white/30 text-white shadow-inner' : 'bg-transparent border-white/5 text-slate-500 hover:bg-white/5 hover:text-slate-300'}`}
+                           >
+                               {m} MB
+                           </button>
+                       ))}
+                   </div>
+               </div>
+    
+               <button
+                   disabled={!v86Loaded}
+                   onClick={() => startV86(ram)}
+                   className="w-full py-4 bg-white text-black font-bold rounded flex items-center justify-center gap-2 hover:bg-slate-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-sm uppercase tracking-widest"
+               >
+                   <Play className="w-4 h-4 fill-current" />
+                   Start Virtual Machine
+               </button>
+           </div>
+      </div>
+
+      <div 
+        className="flex-1 flex flex-col w-full h-full bg-[#000] relative"
+        style={{ display: systemState !== 'dashboard' ? 'flex' : 'none' }}
+      >
                
                {/* Loading Overlay */}
                {systemState === 'loading' && (
@@ -292,7 +302,6 @@ export default function App() {
                     </div>
                </div>
           </div>
-      )}
     </div>
   );
 }
