@@ -3,6 +3,7 @@ import { Play, Square, Maximize, Keyboard, Monitor, Cpu } from 'lucide-react';
 
 declare global {
   interface Window {
+    V86: any;
     V86Starter: any;
   }
 }
@@ -24,7 +25,7 @@ export default function App() {
 
   // Load expected libraries
   useEffect(() => {
-    if (window.V86Starter) {
+    if (window.V86 || window.V86Starter) {
       setV86Loaded(true);
       return;
     }
@@ -97,48 +98,53 @@ export default function App() {
   };
 
   const startV86 = useCallback((memory: number) => {
-      if (!window.V86Starter || !screenContainerRef.current) return;
-      
-      if (emulatorRef.current) {
-          try { emulatorRef.current.destroy() } catch(e){}
-      }
+      const V86Constructor = window.V86 || window.V86Starter;
+      if (!V86Constructor) return;
       
       setSystemState('loading');
       setProgress(0);
       
-      if (textFallbackRef.current) textFallbackRef.current.innerHTML = '';
+      setTimeout(() => {
+          if (!screenContainerRef.current) return;
+          
+          if (emulatorRef.current) {
+              try { emulatorRef.current.destroy() } catch(e){}
+          }
+          
+          if (textFallbackRef.current) textFallbackRef.current.innerHTML = '';
 
-      try {
-          emulatorRef.current = new window.V86Starter({
-              wasm_path: "https://unpkg.com/v86/build/v86.wasm",
-              memory_size: memory * 1024 * 1024,
-              vga_memory_size: 8 * 1024 * 1024,
-              screen_container: screenContainerRef.current,
-              bios: { url: "https://peaceful-cajeta-d037e2.netlify.app/bios/seabios.bin" },
-              vga_bios: { url: "https://peaceful-cajeta-d037e2.netlify.app/bios/vgabios.bin" },
-              cdrom: { url: "https://peaceful-cajeta-d037e2.netlify.app/images/linux.iso" },
-              autostart: true,
-          });
+          try {
+              emulatorRef.current = new V86Constructor({
+                  wasm_path: "https://unpkg.com/v86/build/v86.wasm",
+                  memory_size: memory * 1024 * 1024,
+                  vga_memory_size: 8 * 1024 * 1024,
+                  screen_container: screenContainerRef.current,
+                  bios: { url: "https://unpkg.com/v86/bios/seabios.bin" },
+                  vga_bios: { url: "https://unpkg.com/v86/bios/vgabios.bin" },
+                  cdrom: { url: "https://cdn.jsdelivr.net/gh/karmabet/web-linux-emulator@main/public/images/linux.iso" },
+                  autostart: true,
+              });
 
-          const emu = emulatorRef.current;
+              const emu = emulatorRef.current;
 
-          emu.add_listener("download-progress", (e: any) => {
-              if (e && typeof e.loaded === 'number' && e.total > 0) {
-                  const p = Math.min(100, Math.round((e.loaded / e.total) * 100));
-                  setProgress(p);
-                  if (p >= 100) {
-                       setTimeout(() => setSystemState('running'), 500);
+              emu.add_listener("download-progress", (e: any) => {
+                  if (e && typeof e.loaded === 'number' && e.total > 0) {
+                      const p = Math.min(100, Math.round((e.loaded / e.total) * 100));
+                      setProgress(p);
+                      if (p >= 100) {
+                           setTimeout(() => setSystemState('running'), 500);
+                      }
                   }
-              }
-          });
+              });
 
-          emu.add_listener("emulator-ready", () => setSystemState('running'));
-          emu.add_listener("emulator-started", () => setSystemState('running'));
+              emu.add_listener("emulator-ready", () => setSystemState('running'));
+              emu.add_listener("emulator-started", () => setSystemState('running'));
 
-      } catch (err) {
-          console.error("V86 Initialization Error:", err);
-          setSystemState('dashboard');
-      }
+          } catch (err) {
+              console.error("V86 Initialization Error:", err);
+              setSystemState('dashboard');
+          }
+      }, 100);
   }, []);
 
   const handleStop = () => {
