@@ -122,7 +122,7 @@ export default function App() {
                   screen_container: screenContainerRef.current,
                   bios: { url: "/bios/seabios.bin" },
                   vga_bios: { url: "/bios/vgabios.bin" },
-                  cdrom: { url: "https://cdn.jsdelivr.net/gh/karmabet/web-linux-emulator@main/public/images/linux.iso" },
+                  cdrom: { url: "/bios/linux.iso" },
                   autostart: true,
               });
 
