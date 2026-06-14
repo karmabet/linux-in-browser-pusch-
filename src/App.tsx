@@ -119,8 +119,8 @@ export default function App() {
                   memory_size: memory * 1024 * 1024,
                   vga_memory_size: 8 * 1024 * 1024,
                   screen_container: screenContainerRef.current,
-                  bios: { url: "https://unpkg.com/v86/bios/seabios.bin" },
-                  vga_bios: { url: "https://unpkg.com/v86/bios/vgabios.bin" },
+                  bios: { url: "/bios/seabios.bin" },
+                  vga_bios: { url: "/bios/vgabios.bin" },
                   cdrom: { url: "https://cdn.jsdelivr.net/gh/karmabet/web-linux-emulator@main/public/images/linux.iso" },
                   autostart: true,
               });
