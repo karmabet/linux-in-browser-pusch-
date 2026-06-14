@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Play, Square, Maximize, Keyboard, Monitor, Cpu, Upload, Save, Download } from 'lucide-react';
+import { Play, Square, Maximize, Keyboard, Monitor, Cpu, Upload, Save, Download, Clipboard } from 'lucide-react';
 
 declare global {
   interface Window {
@@ -279,7 +279,7 @@ export default function App() {
   };
 
   const handleSaveState = () => {
-      if (!emulatorRef.current) return;
+      if (!emulatorRef.current || !emulatorRef.current.is_running()) return;
       
       emulatorRef.current.save_state((err: any, state: ArrayBuffer) => {
           if (err) {
@@ -304,7 +304,7 @@ export default function App() {
   };
 
   const handleLoadState = () => {
-      if (!emulatorRef.current || !hasSave) return;
+      if (!emulatorRef.current || !hasSave || !emulatorRef.current.is_running()) return;
       
       const request = indexedDB.open("vm-saves", 1);
       request.onsuccess = (e: any) => {
@@ -320,6 +320,23 @@ export default function App() {
               }
           };
       };
+  };
+
+  const handlePaste = async () => {
+      if (!emulatorRef.current) return;
+      try {
+          const text = await navigator.clipboard.readText();
+          if (!text) return;
+          for (const char of text) {
+              emulatorRef.current.keyboard_send_text(char);
+          }
+          setToastMessage(`Pasted ${text.length} characters`);
+          setTimeout(() => setToastMessage(null), 3000);
+      } catch (e) {
+          console.error(e);
+          setToastMessage("Clipboard access denied — click inside the VM first, then try again");
+          setTimeout(() => setToastMessage(null), 3000);
+      }
   };
 
   return (
@@ -431,15 +448,18 @@ export default function App() {
                     </div>
                     
                     <div className="flex items-center gap-1 sm:gap-2">
-                         <button onClick={handleSaveState} className="p-2.5 rounded hover:bg-white/10 text-slate-400 hover:text-white transition-colors" title="Quick Save">
+                         <button onClick={handleSaveState} disabled={systemState !== 'running' || !emulatorRef.current?.is_running()} className="p-2.5 rounded hover:bg-white/10 text-slate-400 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed" title="Quick Save">
                              <Save className="w-5 h-5" />
                          </button>
-                         <button onClick={handleLoadState} disabled={!hasSave} className="p-2.5 rounded hover:bg-white/10 text-slate-400 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed" title="Quick Load">
+                         <button onClick={handleLoadState} disabled={!hasSave || systemState !== 'running' || !emulatorRef.current?.is_running()} className="p-2.5 rounded hover:bg-white/10 text-slate-400 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed" title="Quick Load">
                              <Download className="w-5 h-5" />
                          </button>
                          <div className="w-px h-5 bg-white/10 mx-1"></div>
                          <button onClick={() => fileInputRef.current?.click()} className="p-2.5 rounded hover:bg-white/10 text-slate-400 hover:text-white transition-colors" title="Upload File">
                              <Upload className="w-5 h-5" />
+                         </button>
+                         <button onClick={handlePaste} className="p-2.5 rounded hover:bg-white/10 text-slate-400 hover:text-white transition-colors" title="Paste">
+                             <Clipboard className="w-5 h-5" />
                          </button>
                          <button onClick={handleKeyboardToggle} className="md:hidden p-2.5 rounded hover:bg-white/10 text-slate-400 hover:text-white transition-colors" title="Toggle Virtual Keyboard">
                              <Keyboard className="w-5 h-5" />
