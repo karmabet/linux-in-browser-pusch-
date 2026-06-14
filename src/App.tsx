@@ -227,7 +227,10 @@ export default function App() {
 
   const toggleFullscreen = () => {
       if (!document.fullscreenElement) {
-          document.documentElement.requestFullscreen().catch(() => {});
+          const el = canvasRef.current as any;
+          if (!el) return;
+          if (el.requestFullscreen) el.requestFullscreen();
+          else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
       } else {
           document.exitFullscreen().catch(() => {});
       }
@@ -266,8 +269,8 @@ export default function App() {
       reader.onload = (ev) => {
           if (ev.target?.result) {
               const contents = new Uint8Array(ev.target.result as ArrayBuffer);
-              emulatorRef.current.create_file("/root/" + file.name, contents);
-              setToastMessage(`File uploaded to /root/${file.name}`);
+              emulatorRef.current.create_file("/root/Desktop/" + file.name, contents);
+              setToastMessage(`File uploaded to /root/Desktop/${file.name}`);
               setTimeout(() => setToastMessage(null), 3000);
           }
       };

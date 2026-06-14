@@ -1,1 +1,10 @@
 @import "tailwindcss";
+
+canvas:-webkit-full-screen {
+  width: 100vw !important;
+  height: 100vh !important;
+}
+canvas:fullscreen {
+  width: 100vw !important;
+  height: 100vh !important;
+}
