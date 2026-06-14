@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Play, Square, Maximize, Keyboard, Monitor, Cpu } from 'lucide-react';
+import { Play, Square, Maximize, Keyboard, Monitor, Cpu, Upload } from 'lucide-react';
 
 declare global {
   interface Window {
@@ -20,8 +20,10 @@ export default function App() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const textFallbackRef = useRef<HTMLDivElement>(null);
   const mobileInputRef = useRef<HTMLInputElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   
   const emulatorRef = useRef<any>(null);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
 
 // Load expected libraries
   useEffect(() => {
@@ -193,8 +195,33 @@ export default function App() {
       }
   };
 
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (!file || !emulatorRef.current) return;
+
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+          if (ev.target?.result) {
+              const contents = new Uint8Array(ev.target.result as ArrayBuffer);
+              emulatorRef.current.create_file("/root/" + file.name, contents);
+              setToastMessage(`File uploaded to /root/${file.name}`);
+              setTimeout(() => setToastMessage(null), 3000);
+          }
+      };
+      reader.readAsArrayBuffer(file);
+      e.target.value = '';
+  };
+
   return (
     <div className="h-screen w-screen bg-[#050505] text-slate-300 font-sans flex flex-col overflow-hidden relative">
+      {toastMessage && (
+          <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-white/10 backdrop-blur-md border border-white/20 text-white px-4 py-2 rounded-lg text-sm shadow-xl z-50 pointer-events-none">
+               {toastMessage}
+          </div>
+      )}
+
+      <input type="file" ref={fileInputRef} className="hidden" onChange={handleFileUpload} />
+
       <input 
          ref={mobileInputRef} 
          type="text" 
@@ -272,11 +299,9 @@ export default function App() {
                {/* VM Container */}
                <div className="flex-1 flex items-center justify-center overflow-hidden w-full relative">
                    {/* Explicit CSS zoom handles perfect scaling mapped to original pixel tracking */}
-                   <div style={{ zoom: zoom, width: 800, height: 600, position: 'relative', backgroundColor: '#000' }}>
-                       <div ref={screenContainerRef} className="w-full h-full relative overflow-hidden" style={{ width: 800, height: 600 }}>
-                           <div ref={textFallbackRef} className="absolute inset-0 whitespace-pre font-mono text-slate-300 pointer-events-none overflow-hidden" style={{ width: 800, height: 600, fontSize: '14px', lineHeight: '1.2' }}></div>
-                           <canvas ref={canvasRef} onClick={handleFocus} className="block absolute inset-0 w-full h-full cursor-crosshair focus:outline-none" tabIndex={0} style={{ touchAction: 'none' }}></canvas>
-                       </div>
+                   <div ref={screenContainerRef} className="relative overflow-hidden" style={{ zoom: zoom, width: 800, height: 600, backgroundColor: '#000' }}>
+                       <div ref={textFallbackRef} className="absolute inset-0 whitespace-pre font-mono text-slate-300 pointer-events-none overflow-hidden" style={{ fontSize: '14px', lineHeight: '14px' }}></div>
+                       <canvas ref={canvasRef} onClick={handleFocus} className="block absolute inset-0 w-full h-full cursor-crosshair focus:outline-none" tabIndex={0} style={{ touchAction: 'none' }}></canvas>
                    </div>
                </div>
         
@@ -288,6 +313,9 @@ export default function App() {
                     </div>
                     
                     <div className="flex items-center gap-1 sm:gap-2">
+                         <button onClick={() => fileInputRef.current?.click()} className="p-2.5 rounded hover:bg-white/10 text-slate-400 hover:text-white transition-colors" title="Upload File">
+                             <Upload className="w-5 h-5" />
+                         </button>
                          <button onClick={handleKeyboardToggle} className="md:hidden p-2.5 rounded hover:bg-white/10 text-slate-400 hover:text-white transition-colors" title="Toggle Virtual Keyboard">
                              <Keyboard className="w-5 h-5" />
                          </button>
