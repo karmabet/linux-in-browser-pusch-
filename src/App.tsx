@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Play, Square, Maximize, Keyboard, Monitor, Cpu, Upload, Save, Download, Clipboard, FilePlus, X } from 'lucide-react';
+import { Play, Square, Maximize, Keyboard, Monitor, Cpu, Upload, Save, Download, Clipboard, FilePlus, X, FolderDown } from 'lucide-react';
 
 declare global {
   interface Window {
@@ -108,6 +108,7 @@ export default function App() {
   const textFallbackRef = useRef<HTMLDivElement>(null);
   const mobileInputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const hadPreBootFiles = useRef<boolean>(false);
   
   const emulatorRef = useRef<any>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -263,7 +264,9 @@ export default function App() {
       setProgress(0);
       
       let hdaConfig = undefined;
+      hadPreBootFiles.current = preBootFiles.length > 0;
       if (preBootFiles.length > 0) {
+          hadPreBootFiles.current = true;
           const buffer = await createDiskImageWithFiles(preBootFiles);
           hdaConfig = {
               buffer: buffer,
@@ -598,6 +601,19 @@ export default function App() {
                          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.5)]"></span>
                          System Running
                     </div>
+
+                    {hadPreBootFiles.current && systemState === 'running' && (
+                         <div className="flex items-center group ml-2 shrink-0">
+                              <button 
+                                  onClick={() => emulatorRef.current?.keyboard_send_text("sudo mount /dev/hda /mnt 2>/dev/null; sudo cp /mnt/* /home/tc/Desktop/ 2>/dev/null; ls /home/tc/Desktop/\n")}
+                                  className="px-2 py-1.5 bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 rounded border border-blue-500/20 text-[10px] sm:text-xs font-mono transition-colors flex items-center gap-1.5"
+                                  title="Click after TinyCore has fully booted"
+                              >
+                                  <FolderDown className="w-3.5 h-3.5" /> 
+                                  <span className="hidden lg:inline">Copy to Desktop</span>
+                              </button>
+                         </div>
+                    )}
 
                     {/* Compact Save Slots */}
                     <div className="flex flex-1 justify-center sm:justify-start md:justify-center items-center gap-1 sm:gap-2 px-2 shrink">
