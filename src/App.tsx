@@ -15,7 +15,7 @@ export default function App() {
   const [v86Loaded, setV86Loaded] = useState<boolean>(false);
   const [zoom, setZoom] = useState<number>(1);
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const [hasSave, setHasSave] = useState(false);
+  const [saveSlots, setSaveSlots] = useState<Record<string, string | null>>({});
   const [isPointerLocked, setIsPointerLocked] = useState(false);
 
   const screenContainerRef = useRef<HTMLDivElement>(null);
@@ -30,19 +30,26 @@ export default function App() {
 // Load expected libraries
   useEffect(() => {
     // Setup IndexedDB for saves
-    const request = indexedDB.open("vm-saves", 1);
+    const request = indexedDB.open("vm-saves", 2);
     request.onupgradeneeded = (e: any) => {
-        e.target.result.createObjectStore("states");
+        const db = e.target.result;
+        if (!db.objectStoreNames.contains("saves")) {
+            db.createObjectStore("saves", { keyPath: "slot" });
+        }
     };
     request.onsuccess = (e: any) => {
         const db = e.target.result;
         try {
-            const tx = db.transaction("states", "readonly");
-            const getReq = tx.objectStore("states").get("quicksave");
-            getReq.onsuccess = (ev: any) => {
-                if (ev.target.result) setHasSave(true);
+            const tx = db.transaction("saves", "readonly");
+            tx.objectStore("saves").getAll().onsuccess = (ev: any) => {
+                const slots = ev.target.result || [];
+                const newSaveSlots: Record<string, string> = {};
+                slots.forEach((s: any) => {
+                    newSaveSlots[s.slot] = s.date;
+                });
+                setSaveSlots(newSaveSlots);
             };
-        } catch(err) {} // Store might just be getting created
+        } catch(err) {} 
     };
 
     // libv86.js is included in index.html
@@ -278,8 +285,8 @@ export default function App() {
       e.target.value = '';
   };
 
-  const handleSaveState = () => {
-      if (!emulatorRef.current || !emulatorRef.current.is_running()) return;
+  const saveToSlot = (slot: string) => {
+      if (!emulatorRef.current) return;
       
       emulatorRef.current.save_state((err: any, state: ArrayBuffer) => {
           if (err) {
@@ -289,35 +296,41 @@ export default function App() {
               return;
           }
           
-          const request = indexedDB.open("vm-saves", 1);
+          const request = indexedDB.open("vm-saves", 2);
           request.onsuccess = (e: any) => {
               const db = e.target.result;
-              const tx = db.transaction("states", "readwrite");
-              tx.objectStore("states").put(state, "quicksave");
+              const tx = db.transaction("saves", "readwrite");
+              const dateStr = new Date().toLocaleString();
+              tx.objectStore("saves").put({
+                  slot: slot,
+                  state: state,
+                  date: dateStr
+              });
               tx.oncomplete = () => {
-                  setHasSave(true);
-                  setToastMessage("State saved");
+                  setSaveSlots(prev => ({...prev, [slot]: dateStr}));
+                  setToastMessage(`✅ Saved to Slot ${slot.replace('save-', '')}`);
                   setTimeout(() => setToastMessage(null), 3000);
               };
           };
       });
   };
 
-  const handleLoadState = () => {
-      if (!emulatorRef.current || !hasSave || !emulatorRef.current.is_running()) return;
+  const loadFromSlot = (slot: string) => {
+      if (!emulatorRef.current) return;
       
-      const request = indexedDB.open("vm-saves", 1);
+      const request = indexedDB.open("vm-saves", 2);
       request.onsuccess = (e: any) => {
           const db = e.target.result;
-          const tx = db.transaction("states", "readonly");
-          const getReq = tx.objectStore("states").get("quicksave");
-          getReq.onsuccess = (ev: any) => {
-              const state = ev.target.result;
-              if (state) {
-                  emulatorRef.current.restore_state(state);
-                  setToastMessage("State loaded");
+          const tx = db.transaction("saves", "readonly");
+          tx.objectStore("saves").get(slot).onsuccess = (ev: any) => {
+              if (!ev.target.result) {
+                  setToastMessage(`Slot ${slot.replace('save-', '')} is empty`);
                   setTimeout(() => setToastMessage(null), 3000);
+                  return;
               }
+              emulatorRef.current.restore_state(ev.target.result.state);
+              setToastMessage(`✅ Loaded Slot ${slot.replace('save-', '')} — ${ev.target.result.date}`);
+              setTimeout(() => setToastMessage(null), 3000);
           };
       };
   };
@@ -448,13 +461,6 @@ export default function App() {
                     </div>
                     
                     <div className="flex items-center gap-1 sm:gap-2">
-                         <button onClick={handleSaveState} disabled={systemState !== 'running' || !emulatorRef.current?.is_running()} className="p-2.5 rounded hover:bg-white/10 text-slate-400 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed" title="Quick Save">
-                             <Save className="w-5 h-5" />
-                         </button>
-                         <button onClick={handleLoadState} disabled={!hasSave || systemState !== 'running' || !emulatorRef.current?.is_running()} className="p-2.5 rounded hover:bg-white/10 text-slate-400 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed" title="Quick Load">
-                             <Download className="w-5 h-5" />
-                         </button>
-                         <div className="w-px h-5 bg-white/10 mx-1"></div>
                          <button onClick={() => fileInputRef.current?.click()} className="p-2.5 rounded hover:bg-white/10 text-slate-400 hover:text-white transition-colors" title="Upload File">
                              <Upload className="w-5 h-5" />
                          </button>
@@ -473,6 +479,39 @@ export default function App() {
                              <span className="text-[10px] font-bold uppercase tracking-wider hidden sm:block">Power Off</span>
                          </button>
                     </div>
+               </div>
+
+               {/* Save Slots */}
+               <div className="bg-[#111] border-t border-white/5 p-3 flex gap-4 overflow-x-auto shrink-0 justify-center items-center scrollbar-hide">
+                    {[1, 2, 3].map(slotNum => {
+                        const slotKey = `save-${slotNum}`;
+                        const isSaved = !!saveSlots[slotKey];
+                        return (
+                            <div key={slotNum} className="flex flex-col gap-2 items-center bg-black/40 px-4 py-2.5 rounded-lg border border-white/10 min-w-[220px]">
+                                <div className="flex flex-col sm:flex-row items-center gap-3 w-full justify-between">
+                                    <span className="text-xs font-bold text-slate-300 uppercase tracking-wider">Slot {slotNum}</span>
+                                    <div className="flex gap-1.5">
+                                        <button 
+                                            onClick={() => saveToSlot(slotKey)} 
+                                            className="px-2.5 py-1.5 bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white rounded flex items-center gap-1.5 transition-colors text-xs font-medium"
+                                        >
+                                            <Save className="w-3.5 h-3.5" /> Save
+                                        </button>
+                                        <button 
+                                            onClick={() => loadFromSlot(slotKey)} 
+                                            disabled={!isSaved} 
+                                            className="px-2.5 py-1.5 bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white rounded flex items-center gap-1.5 transition-colors disabled:opacity-30 disabled:cursor-not-allowed text-xs font-medium"
+                                        >
+                                            <Play className="w-3.5 h-3.5 fill-current" /> Load
+                                        </button>
+                                    </div>
+                                </div>
+                                <span className="text-[10px] text-slate-500 font-mono truncate w-full text-center">
+                                    {isSaved ? saveSlots[slotKey] : "Empty"}
+                                </span>
+                            </div>
+                        );
+                    })}
                </div>
           </div>
     </div>
