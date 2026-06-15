@@ -381,52 +381,31 @@ export default function App() {
       setPreBootFiles(prev => prev.filter((_, i) => i !== index));
   };
 
-  const saveToSlot = (slot: string) => {
+  const saveToSlot = async (slot: string) => {
       if (!emulatorRef.current) return;
-      
       setToastMessage("Saving...");
-      
-      emulatorRef.current.stop();
-      emulatorRef.current.save_state((err: any, state: ArrayBuffer) => {
-          emulatorRef.current?.run();
-          if (err) {
-              console.error(err);
-              setToastMessage("Failed to save state.");
-              setTimeout(() => setToastMessage(null), 3000);
-              return;
-          }
+      try {
+          emulatorRef.current.stop();
+          const state = await emulatorRef.current.save_state();
+          emulatorRef.current.run();
           
-          try {
-              const request = indexedDB.open("vm-saves", 2);
-              request.onsuccess = (e: any) => {
-                  const db = e.target.result;
-                  const tx = db.transaction("saves", "readwrite");
-                  const dateStr = new Date().toLocaleString();
-                  const req = tx.objectStore("saves").put({
-                      slot: slot,
-                      state: state,
-                      date: dateStr
-                  });
-                  req.onsuccess = () => {
-                      setSaveSlots(prev => ({...prev, [slot]: dateStr}));
-                      setToastMessage(`✅ Saved to Slot ${slot.replace('save-', '')}`);
-                      setTimeout(() => setToastMessage(null), 3000);
-                  };
-                  req.onerror = () => {
-                      setToastMessage("Save Storage Error");
-                      setTimeout(() => setToastMessage(null), 3000);
-                  };
-              };
-              request.onerror = () => {
-                  setToastMessage("Save DB Error");
+          const request = indexedDB.open("vm-saves", 2);
+          request.onsuccess = (e: any) => {
+              const db = e.target.result;
+              const tx = db.transaction("saves", "readwrite");
+              const dateStr = new Date().toLocaleString();
+              tx.objectStore("saves").put({ slot, state, date: dateStr }).onsuccess = () => {
+                  setSaveSlots(prev => ({...prev, [slot]: dateStr}));
+                  setToastMessage(`✅ Saved to Slot ${slot.replace('save-', '')}`);
                   setTimeout(() => setToastMessage(null), 3000);
               };
-          } catch (errIdb) {
-              console.error(errIdb);
-              setToastMessage("Save Catch Error");
-              setTimeout(() => setToastMessage(null), 3000);
-          }
-      });
+          };
+      } catch (err) {
+          emulatorRef.current?.run();
+          console.error(err);
+          setToastMessage("Save failed.");
+          setTimeout(() => setToastMessage(null), 3000);
+      }
   };
 
   const loadFromSlot = (slot: string) => {
