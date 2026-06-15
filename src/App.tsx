@@ -605,9 +605,9 @@ export default function App() {
                     {hadPreBootFiles.current && systemState === 'running' && (
                          <div className="flex items-center group ml-2 shrink-0">
                               <button 
-                                  onClick={() => emulatorRef.current?.keyboard_send_text("sudo mount /dev/hda /mnt 2>/dev/null; sudo cp /mnt/* /home/tc/Desktop/ 2>/dev/null; ls /home/tc/Desktop/\n")}
+                                  onClick={() => emulatorRef.current?.keyboard_send_text("sudo mount /dev/sda /home/tc/Desktop 2>/dev/null || sudo mount /dev/hda /home/tc/Desktop 2>/dev/null\n")}
                                   className="px-2 py-1.5 bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 rounded border border-blue-500/20 text-[10px] sm:text-xs font-mono transition-colors flex items-center gap-1.5"
-                                  title="Click after TinyCore has fully booted"
+                                  title="First click inside the TinyCore terminal, then click this button"
                               >
                                   <FolderDown className="w-3.5 h-3.5" /> 
                                   <span className="hidden lg:inline">Copy to Desktop</span>
