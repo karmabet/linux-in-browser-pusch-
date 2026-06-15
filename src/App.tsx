@@ -448,6 +448,19 @@ export default function App() {
       }
   };
 
+  const mountFiles = () => {
+      if (!emulatorRef.current) return;
+      // Focus the canvas first so TinyCore terminal receives keys
+      canvasRef.current?.focus();
+      // Small delay to ensure focus is received
+      setTimeout(() => {
+          const cmd = "sudo mount /dev/sda /home/tc/Desktop 2>/dev/null || sudo mount /dev/hda /home/tc/Desktop 2>/dev/null\n";
+          emulatorRef.current.keyboard_send_text(cmd);
+          setToastMessage("Mount command sent — check TinyCore terminal");
+          setTimeout(() => setToastMessage(null), 3000);
+      }, 200);
+  };
+
   const handlePaste = async () => {
       if (!emulatorRef.current) return;
       try {
@@ -602,15 +615,15 @@ export default function App() {
                          System Running
                     </div>
 
-                    {hadPreBootFiles.current && systemState === 'running' && (
+                    {systemState === 'running' && (
                          <div className="flex items-center group ml-2 shrink-0">
                               <button 
-                                  onClick={() => emulatorRef.current?.keyboard_send_text("sudo mount /dev/sda /home/tc/Desktop 2>/dev/null || sudo mount /dev/hda /home/tc/Desktop 2>/dev/null\n")}
+                                  onClick={mountFiles}
                                   className="px-2 py-1.5 bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 rounded border border-blue-500/20 text-[10px] sm:text-xs font-mono transition-colors flex items-center gap-1.5"
-                                  title="First click inside the TinyCore terminal, then click this button"
+                                  title="Mount available drives to the Desktop"
                               >
                                   <FolderDown className="w-3.5 h-3.5" /> 
-                                  <span className="hidden lg:inline">Copy to Desktop</span>
+                                  <span className="hidden lg:inline">Mount Files</span>
                               </button>
                          </div>
                     )}
