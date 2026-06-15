@@ -275,9 +275,16 @@ export default function App() {
       const reader = new FileReader();
       reader.onload = (ev) => {
           if (ev.target?.result) {
-              const contents = new Uint8Array(ev.target.result as ArrayBuffer);
-              emulatorRef.current.create_file("/root/Desktop/" + file.name, contents);
-              setToastMessage(`File uploaded to /root/Desktop/${file.name}`);
+              const bytes = new Uint8Array(ev.target.result as ArrayBuffer);
+              let binary = '';
+              for (let i = 0; i < bytes.byteLength; i++) {
+                  binary += String.fromCharCode(bytes[i]);
+              }
+              const base64 = btoa(binary);
+              const filename = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+              const cmd = `mkdir -p /root/Desktop && echo "${base64}" | base64 -d > /root/Desktop/${filename}\n`;
+              emulatorRef.current.serial0_send(cmd);
+              setToastMessage(`✅ ${filename} → /root/Desktop/`);
               setTimeout(() => setToastMessage(null), 3000);
           }
       };
