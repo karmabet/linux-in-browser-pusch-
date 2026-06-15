@@ -1,11 +1,97 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Play, Square, Maximize, Keyboard, Monitor, Cpu, Upload, Save, Download, Clipboard } from 'lucide-react';
+import { Play, Square, Maximize, Keyboard, Monitor, Cpu, Upload, Save, Download, Clipboard, FilePlus, X } from 'lucide-react';
 
 declare global {
   interface Window {
     V86: any;
     V86Starter: any;
   }
+}
+
+async function createDiskImageWithFiles(files: File[]): Promise<ArrayBuffer> {
+  return new Promise((resolve) => {
+    const size = 64 * 1024 * 1024;
+    const buf = new ArrayBuffer(size);
+    const view = new DataView(buf);
+    const u8 = new Uint8Array(buf);
+
+    // Boot sector
+    u8.set([0xEB, 0x3C, 0x90], 0);
+    u8.set(new TextEncoder().encode("MSWIN4.1"), 3);
+    view.setUint16(11, 512, true); // Bytes per sector
+    u8[13] = 4; // Sectors per cluster
+    view.setUint16(14, 1, true); // Reserved sectors
+    u8[16] = 2; // Number of FATs
+    view.setUint16(17, 512, true); // Root entries
+    view.setUint16(19, 0, true); // Total sectors (small)
+    u8[21] = 0xF8; // Media descriptor
+    view.setUint16(22, 128, true); // Sectors per FAT
+    view.setUint16(24, 63, true); // Sectors per track
+    view.setUint16(26, 255, true); // Heads
+    view.setUint32(28, 0, true); // Hidden sectors
+    view.setUint32(32, 131072, true); // Total sectors (large)
+    u8[36] = 0x80; // Drive number
+    u8[38] = 0x29; // Signature
+    view.setUint32(39, 0x12345678, true); // Volume ID
+    u8.set(new TextEncoder().encode("NO NAME    "), 43);
+    u8.set(new TextEncoder().encode("FAT16   "), 54);
+    u8[510] = 0x55;
+    u8[511] = 0xAA;
+
+    // FAT Init
+    const fat1Start = 1 * 512;
+    const fat2Start = (1 + 128) * 512;
+    view.setUint16(fat1Start + 0, 0xFFF8, true);
+    view.setUint16(fat1Start + 2, 0xFFFF, true);
+    view.setUint16(fat2Start + 0, 0xFFF8, true);
+    view.setUint16(fat2Start + 2, 0xFFFF, true);
+
+    const rootDirStart = (1 + 128 * 2) * 512;
+    const dataStart = rootDirStart + 32 * 512;
+
+    let nextCluster = 2;
+    let rootDirIdx = 0;
+
+    const readFiles = async () => {
+      for (const file of files) {
+        if (rootDirIdx >= 512) break; // Max 512 entries
+        
+        const buffer = await file.arrayBuffer();
+        const f8 = new Uint8Array(buffer);
+        const fileLen = f8.length;
+        
+        const nameParts = file.name.toUpperCase().split('.');
+        const base = nameParts[0].replace(/[^A-Z0-9_-]/g, '').substring(0, 8).padEnd(8, ' ');
+        const ext = (nameParts.length > 1 ? nameParts[nameParts.length - 1].replace(/[^A-Z0-9_-]/g, '') : '').substring(0, 3).padEnd(3, ' ');
+        
+        const entryOffset = rootDirStart + rootDirIdx * 32;
+        u8.set(new TextEncoder().encode(base + ext), entryOffset);
+        u8[entryOffset + 11] = 0x20; // Archive attr
+        view.setUint16(entryOffset + 26, fileLen > 0 ? nextCluster : 0, true); // Start cluster
+        view.setUint32(entryOffset + 28, fileLen, true); // File size
+        rootDirIdx++;
+
+        if (fileLen === 0) continue;
+
+        let remaining = fileLen;
+        let dataOffset = 0;
+        while (remaining > 0) {
+          const toWrite = Math.min(remaining, 2048);
+          u8.set(f8.subarray(dataOffset, dataOffset + toWrite), dataStart + (nextCluster - 2) * 2048);
+          remaining -= toWrite;
+          dataOffset += toWrite;
+
+          const isLast = remaining === 0;
+          view.setUint16(fat1Start + nextCluster * 2, isLast ? 0xFFFF : nextCluster + 1, true);
+          view.setUint16(fat2Start + nextCluster * 2, isLast ? 0xFFFF : nextCluster + 1, true);
+          nextCluster++;
+        }
+      }
+      resolve(buf);
+    };
+
+    readFiles();
+  });
 }
 
 export default function App() {
@@ -17,6 +103,7 @@ export default function App() {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [saveSlots, setSaveSlots] = useState<Record<string, string | null>>({});
   const [isPointerLocked, setIsPointerLocked] = useState(false);
+  const [preBootFiles, setPreBootFiles] = useState<File[]>([]);
 
   const screenContainerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -168,7 +255,7 @@ export default function App() {
     }
   };
 
-  const startV86 = useCallback((memory: number) => {
+  const startV86 = useCallback(async (memory: number) => {
       if (!window.V86) {
           console.error("V86 not loaded. Cannot start virtual machine.");
           return;
@@ -176,6 +263,15 @@ export default function App() {
       
       setSystemState('loading');
       setProgress(0);
+      
+      let hdaConfig = undefined;
+      if (preBootFiles.length > 0) {
+          const buffer = await createDiskImageWithFiles(preBootFiles);
+          hdaConfig = {
+              buffer: buffer,
+              async: false
+          };
+      }
       
       setTimeout(() => {
           if (!screenContainerRef.current) return;
@@ -187,7 +283,7 @@ export default function App() {
           if (textFallbackRef.current) textFallbackRef.current.innerHTML = '';
 
           try {
-              emulatorRef.current = new window.V86({
+              const v86Config: any = {
                   wasm_path: "https://unpkg.com/v86/build/v86.wasm",
                   memory_size: memory * 1024 * 1024,
                   vga_memory_size: 8 * 1024 * 1024,
@@ -196,7 +292,13 @@ export default function App() {
                   vga_bios: { url: "/bios/vgabios.bin" },
                   cdrom: { url: "/bios/linux.iso" },
                   autostart: true,
-              });
+              };
+              
+              if (hdaConfig) {
+                  v86Config.hda = hdaConfig;
+              }
+
+              emulatorRef.current = new window.V86(v86Config);
 
               const emu = emulatorRef.current;
 
@@ -268,32 +370,22 @@ export default function App() {
       }
   };
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-      const file = e.target.files?.[0];
-      if (!file || !emulatorRef.current) return;
-
-      const reader = new FileReader();
-      reader.onload = (ev) => {
-          if (ev.target?.result) {
-              const bytes = new Uint8Array(ev.target.result as ArrayBuffer);
-              let binary = '';
-              for (let i = 0; i < bytes.byteLength; i++) {
-                  binary += String.fromCharCode(bytes[i]);
-              }
-              const base64 = btoa(binary);
-              const filename = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
-              const cmd = `mkdir -p /root/Desktop && echo "${base64}" | base64 -d > /root/Desktop/${filename}\n`;
-              emulatorRef.current.serial0_send(cmd);
-              setToastMessage(`✅ ${filename} → /root/Desktop/`);
-              setTimeout(() => setToastMessage(null), 3000);
-          }
-      };
-      reader.readAsArrayBuffer(file);
+  const handlePreBootFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+      const files = e.target.files;
+      if (files) {
+          setPreBootFiles(prev => [...prev, ...Array.from(files)]);
+      }
       e.target.value = '';
+  };
+
+  const removePreBootFile = (index: number) => {
+      setPreBootFiles(prev => prev.filter((_, i) => i !== index));
   };
 
   const saveToSlot = (slot: string) => {
       if (!emulatorRef.current) return;
+      
+      setToastMessage("Saving...");
       
       emulatorRef.current.save_state((err: any, state: ArrayBuffer) => {
           if (err) {
@@ -303,43 +395,72 @@ export default function App() {
               return;
           }
           
-          const request = indexedDB.open("vm-saves", 2);
-          request.onsuccess = (e: any) => {
-              const db = e.target.result;
-              const tx = db.transaction("saves", "readwrite");
-              const dateStr = new Date().toLocaleString();
-              tx.objectStore("saves").put({
-                  slot: slot,
-                  state: state,
-                  date: dateStr
-              });
-              tx.oncomplete = () => {
-                  setSaveSlots(prev => ({...prev, [slot]: dateStr}));
-                  setToastMessage(`✅ Saved to Slot ${slot.replace('save-', '')}`);
+          try {
+              const request = indexedDB.open("vm-saves", 2);
+              request.onsuccess = (e: any) => {
+                  const db = e.target.result;
+                  const tx = db.transaction("saves", "readwrite");
+                  const dateStr = new Date().toLocaleString();
+                  const req = tx.objectStore("saves").put({
+                      slot: slot,
+                      state: state,
+                      date: dateStr
+                  });
+                  req.onsuccess = () => {
+                      setSaveSlots(prev => ({...prev, [slot]: dateStr}));
+                      setToastMessage(`✅ Saved to Slot ${slot.replace('save-', '')}`);
+                      setTimeout(() => setToastMessage(null), 3000);
+                  };
+                  req.onerror = () => {
+                      setToastMessage("Save Storage Error");
+                      setTimeout(() => setToastMessage(null), 3000);
+                  };
+              };
+              request.onerror = () => {
+                  setToastMessage("Save DB Error");
                   setTimeout(() => setToastMessage(null), 3000);
               };
-          };
+          } catch (errIdb) {
+              console.error(errIdb);
+              setToastMessage("Save Catch Error");
+              setTimeout(() => setToastMessage(null), 3000);
+          }
       });
   };
 
   const loadFromSlot = (slot: string) => {
       if (!emulatorRef.current) return;
       
-      const request = indexedDB.open("vm-saves", 2);
-      request.onsuccess = (e: any) => {
-          const db = e.target.result;
-          const tx = db.transaction("saves", "readonly");
-          tx.objectStore("saves").get(slot).onsuccess = (ev: any) => {
-              if (!ev.target.result) {
-                  setToastMessage(`Slot ${slot.replace('save-', '')} is empty`);
+      try {
+          const request = indexedDB.open("vm-saves", 2);
+          request.onsuccess = (e: any) => {
+              const db = e.target.result;
+              const tx = db.transaction("saves", "readonly");
+              const req = tx.objectStore("saves").get(slot);
+              req.onsuccess = (ev: any) => {
+                  if (!ev.target.result) {
+                      setToastMessage(`Slot ${slot.replace('save-', '')} is empty`);
+                      setTimeout(() => setToastMessage(null), 3000);
+                      return;
+                  }
+                  emulatorRef.current.restore_state(ev.target.result.state);
+                  setToastMessage(`✅ Loaded Slot ${slot.replace('save-', '')} — ${ev.target.result.date}`);
                   setTimeout(() => setToastMessage(null), 3000);
-                  return;
-              }
-              emulatorRef.current.restore_state(ev.target.result.state);
-              setToastMessage(`✅ Loaded Slot ${slot.replace('save-', '')} — ${ev.target.result.date}`);
+              };
+              req.onerror = () => {
+                  setToastMessage("Load Storage Error");
+                  setTimeout(() => setToastMessage(null), 3000);
+              };
+          };
+          request.onerror = () => {
+              setToastMessage("Load DB Error");
               setTimeout(() => setToastMessage(null), 3000);
           };
-      };
+      } catch (errIdb) {
+          console.error(errIdb);
+          setToastMessage("Load Catch Error");
+          setTimeout(() => setToastMessage(null), 3000);
+      }
   };
 
   const handlePaste = async () => {
@@ -367,7 +488,7 @@ export default function App() {
           </div>
       )}
 
-      <input type="file" ref={fileInputRef} className="hidden" onChange={handleFileUpload} />
+      <input type="file" ref={fileInputRef} multiple className="hidden" onChange={handlePreBootFileSelect} />
 
       <input 
          ref={mobileInputRef} 
@@ -393,7 +514,7 @@ export default function App() {
                    Run a full x86-64 Linux environment natively in your browser.
                </p>
     
-               <div className="w-full mb-8">
+               <div className="w-full mb-6 relative">
                    <label className="text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-3 block text-center">Memory Allocation (RAM)</label>
                    <div className="flex gap-2">
                        {[128, 256, 512].map(m => (
@@ -406,6 +527,30 @@ export default function App() {
                            </button>
                        ))}
                    </div>
+               </div>
+
+               <div className="w-full mb-8">
+                   <button 
+                       onClick={() => fileInputRef.current?.click()}
+                       className="w-full py-2.5 bg-white/5 border border-white/10 rounded flex items-center justify-center gap-2 text-sm text-slate-300 hover:bg-white/10 hover:text-white transition-colors"
+                   >
+                       <FilePlus className="w-4 h-4" /> Add pre-boot files to VM
+                   </button>
+                   {preBootFiles.length > 0 && (
+                       <div className="mt-3 bg-black/40 border border-white/5 rounded p-2 max-h-32 overflow-y-auto">
+                           {preBootFiles.map((f, i) => (
+                               <div key={i} className="flex items-center justify-between py-1 px-2 hover:bg-white/5 rounded group text-slate-400">
+                                   <span className="text-xs font-mono truncate mr-2" title={f.name}>{f.name}</span>
+                                   <button 
+                                       onClick={() => removePreBootFile(i)}
+                                       className="opacity-50 group-hover:opacity-100 hover:text-red-400 transition-colors"
+                                   >
+                                       <X className="w-3.5 h-3.5" />
+                                   </button>
+                               </div>
+                           ))}
+                       </div>
+                   )}
                </div>
     
                <button
@@ -461,64 +606,56 @@ export default function App() {
                </div>
         
                {/* Toolbar */}
-               <div className="h-14 bg-[#0a0a0a] border-t border-white/5 flex items-center justify-between px-4 sm:px-6 shrink-0 z-40">
-                    <div className="flex items-center gap-3 text-xs font-mono text-slate-400">
-                         <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse shadow-[0_0_8px_rgba(34,197,94,0.6)]"></span>
+               <div className="h-14 bg-[#0a0a0a] border-t border-white/5 flex items-center justify-between px-2 sm:px-4 shrink-0 z-40 relative">
+                    <div className="flex items-center gap-2 sm:gap-3 text-[10px] sm:text-xs font-mono text-slate-400 shrink-0 hidden md:flex">
+                         <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.5)]"></span>
                          System Running
                     </div>
+
+                    {/* Compact Save Slots */}
+                    <div className="flex flex-1 justify-center sm:justify-start md:justify-center items-center gap-1 sm:gap-2 px-2 shrink">
+                         {[1, 2, 3].map(slotNum => {
+                             const slotKey = `save-${slotNum}`;
+                             const isSaved = !!saveSlots[slotKey];
+                             return (
+                                 <div key={slotNum} className="flex items-center bg-black/40 rounded border border-white/10 overflow-hidden shrink-0" title={isSaved ? saveSlots[slotKey]! : "Empty Slot"}>
+                                     <span className="px-1.5 py-1 text-[10px] sm:text-xs text-slate-500 font-mono bg-white/5 border-r border-white/10 hidden sm:block">{slotNum}</span>
+                                     <button 
+                                         onClick={() => saveToSlot(slotKey)} 
+                                         className="px-2 py-1.5 hover:bg-white/10 text-slate-400 hover:text-white transition-colors"
+                                         title={`Save to Slot ${slotNum}`}
+                                     >
+                                         <Save className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                                     </button>
+                                     <button 
+                                         onClick={() => loadFromSlot(slotKey)} 
+                                         disabled={!isSaved} 
+                                         className="px-2 py-1.5 hover:bg-white/10 text-slate-400 hover:text-white transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                                         title={isSaved ? `Load Slot ${slotNum}` : `Slot ${slotNum} Empty`}
+                                     >
+                                         <Play className="w-3.5 h-3.5 sm:w-4 sm:h-4 fill-current" />
+                                     </button>
+                                 </div>
+                             );
+                         })}
+                    </div>
                     
-                    <div className="flex items-center gap-1 sm:gap-2">
-                         <button onClick={() => fileInputRef.current?.click()} className="p-2.5 rounded hover:bg-white/10 text-slate-400 hover:text-white transition-colors" title="Upload File">
-                             <Upload className="w-5 h-5" />
+                    <div className="flex items-center gap-1 shrink-0">
+                         <button onClick={handlePaste} className="p-2 sm:p-2.5 rounded hover:bg-white/10 text-slate-400 hover:text-white transition-colors" title="Paste">
+                             <Clipboard className="w-4 h-4 sm:w-5 sm:h-5" />
                          </button>
-                         <button onClick={handlePaste} className="p-2.5 rounded hover:bg-white/10 text-slate-400 hover:text-white transition-colors" title="Paste">
-                             <Clipboard className="w-5 h-5" />
+                         <button onClick={handleKeyboardToggle} className="md:hidden p-2 sm:p-2.5 rounded hover:bg-white/10 text-slate-400 hover:text-white transition-colors" title="Toggle Virtual Keyboard">
+                             <Keyboard className="w-4 h-4 sm:w-5 sm:h-5" />
                          </button>
-                         <button onClick={handleKeyboardToggle} className="md:hidden p-2.5 rounded hover:bg-white/10 text-slate-400 hover:text-white transition-colors" title="Toggle Virtual Keyboard">
-                             <Keyboard className="w-5 h-5" />
-                         </button>
-                         <button onClick={toggleFullscreen} className="p-2.5 rounded hover:bg-white/10 text-slate-400 hover:text-white transition-colors" title="Toggle Fullscreen">
-                             <Maximize className="w-5 h-5" />
+                         <button onClick={toggleFullscreen} className="p-2 sm:p-2.5 rounded hover:bg-white/10 text-slate-400 hover:text-white transition-colors" title="Toggle Fullscreen">
+                             <Maximize className="w-4 h-4 sm:w-5 sm:h-5" />
                          </button>
                          <div className="w-px h-5 bg-white/10 mx-1"></div>
-                         <button onClick={handleStop} className="p-2.5 rounded hover:bg-red-500/20 text-slate-400 hover:text-red-400 transition-colors group flex items-center gap-2" title="Power Off">
-                             <Square className="w-4 h-4 group-hover:fill-current" />
-                             <span className="text-[10px] font-bold uppercase tracking-wider hidden sm:block">Power Off</span>
+                         <button onClick={handleStop} className="p-2 sm:p-2.5 rounded hover:bg-red-500/20 text-slate-400 hover:text-red-400 transition-colors group flex items-center gap-2" title="Power Off">
+                             <Square className="w-4 h-4 sm:w-4 sm:h-4 group-hover:fill-current" />
+                             <span className="text-[10px] font-bold uppercase tracking-wider hidden lg:block">Power Off</span>
                          </button>
                     </div>
-               </div>
-
-               {/* Save Slots */}
-               <div className="bg-[#111] border-t border-white/5 p-3 flex gap-4 overflow-x-auto shrink-0 justify-center items-center scrollbar-hide">
-                    {[1, 2, 3].map(slotNum => {
-                        const slotKey = `save-${slotNum}`;
-                        const isSaved = !!saveSlots[slotKey];
-                        return (
-                            <div key={slotNum} className="flex flex-col gap-2 items-center bg-black/40 px-4 py-2.5 rounded-lg border border-white/10 min-w-[220px]">
-                                <div className="flex flex-col sm:flex-row items-center gap-3 w-full justify-between">
-                                    <span className="text-xs font-bold text-slate-300 uppercase tracking-wider">Slot {slotNum}</span>
-                                    <div className="flex gap-1.5">
-                                        <button 
-                                            onClick={() => saveToSlot(slotKey)} 
-                                            className="px-2.5 py-1.5 bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white rounded flex items-center gap-1.5 transition-colors text-xs font-medium"
-                                        >
-                                            <Save className="w-3.5 h-3.5" /> Save
-                                        </button>
-                                        <button 
-                                            onClick={() => loadFromSlot(slotKey)} 
-                                            disabled={!isSaved} 
-                                            className="px-2.5 py-1.5 bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white rounded flex items-center gap-1.5 transition-colors disabled:opacity-30 disabled:cursor-not-allowed text-xs font-medium"
-                                        >
-                                            <Play className="w-3.5 h-3.5 fill-current" /> Load
-                                        </button>
-                                    </div>
-                                </div>
-                                <span className="text-[10px] text-slate-500 font-mono truncate w-full text-center">
-                                    {isSaved ? saveSlots[slotKey] : "Empty"}
-                                </span>
-                            </div>
-                        );
-                    })}
                </div>
           </div>
     </div>
