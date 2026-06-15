@@ -35,8 +35,6 @@ async function createDiskImageWithFiles(files: File[]): Promise<ArrayBuffer> {
     view.setUint32(39, 0x12345678, true); // Volume ID
     u8.set(new TextEncoder().encode("NO NAME    "), 43);
     u8.set(new TextEncoder().encode("FAT16   "), 54);
-    u8[510] = 0x55;
-    u8[511] = 0xAA;
 
     // FAT Init
     const fat1Start = 1 * 512;
@@ -292,6 +290,7 @@ export default function App() {
                   vga_bios: { url: "/bios/vgabios.bin" },
                   cdrom: { url: "/bios/linux.iso" },
                   autostart: true,
+                  boot_order: 0x132,
               };
               
               if (hdaConfig) {
@@ -554,6 +553,11 @@ export default function App() {
                                </div>
                            ))}
                        </div>
+                   )}
+                   {preBootFiles.length > 0 && (
+                       <p className="text-[10px] text-slate-500 font-mono mt-2 text-center">
+                           💡 After boot, type in terminal: <span className="text-slate-300">mount /dev/hda /mnt</span>
+                       </p>
                    )}
                </div>
     
