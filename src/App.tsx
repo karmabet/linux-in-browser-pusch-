@@ -324,7 +324,7 @@ export default function App() {
               setSystemState('dashboard');
           }
       }, 100);
-  }, []);
+  }, [preBootFiles]);
 
   const handleStop = () => {
     if (emulatorRef.current) {
@@ -387,7 +387,9 @@ export default function App() {
       
       setToastMessage("Saving...");
       
+      emulatorRef.current.stop();
       emulatorRef.current.save_state((err: any, state: ArrayBuffer) => {
+          emulatorRef.current?.run();
           if (err) {
               console.error(err);
               setToastMessage("Failed to save state.");
@@ -443,7 +445,9 @@ export default function App() {
                       setTimeout(() => setToastMessage(null), 3000);
                       return;
                   }
+                  emulatorRef.current.stop();
                   emulatorRef.current.restore_state(ev.target.result.state);
+                  emulatorRef.current.run();
                   setToastMessage(`✅ Loaded Slot ${slot.replace('save-', '')} — ${ev.target.result.date}`);
                   setTimeout(() => setToastMessage(null), 3000);
               };
