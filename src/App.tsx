@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Play, Square, Maximize, Keyboard, Monitor, Cpu, Save, Clipboard, Network } from 'lucide-react';
+import { Play, Square, Maximize, Keyboard, Monitor, Cpu, Save, Clipboard, Network, Globe } from 'lucide-react';
 
 declare global {
   interface Window {
@@ -413,6 +413,16 @@ export default function App() {
       }, 200);
   };
 
+  const installBrowser = () => {
+      if (!emulatorRef.current) return;
+      canvasRef.current?.focus();
+      setTimeout(() => {
+          emulatorRef.current.keyboard_send_text("tce-load -wi links && links http://google.com\n");
+          setToastMessage("Installing & launching text browser...");
+          setTimeout(() => setToastMessage(null), 3000);
+      }, 200);
+  };
+
   const handlePaste = async () => {
       if (!emulatorRef.current) return;
       try {
@@ -549,7 +559,7 @@ export default function App() {
                     </div>
 
                     {systemState === 'running' && (
-                         <div className="flex items-center group ml-2 shrink-0">
+                         <div className="flex items-center group ml-2 shrink-0 gap-1 sm:gap-2">
                               <button 
                                   onClick={setupNetwork}
                                   className="px-2 py-1.5 bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white rounded border border-white/10 text-[10px] sm:text-xs font-mono transition-colors flex items-center gap-1.5"
@@ -557,6 +567,15 @@ export default function App() {
                               >
                                   <Network className="w-3.5 h-3.5" /> 
                                   <span className="hidden lg:inline">Connect Net</span>
+                              </button>
+                              
+                              <button 
+                                  onClick={installBrowser}
+                                  className="px-2 py-1.5 bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white rounded border border-white/10 text-[10px] sm:text-xs font-mono transition-colors flex items-center gap-1.5"
+                                  title="Install Links Browser"
+                              >
+                                  <Globe className="w-3.5 h-3.5" /> 
+                                  <span className="hidden lg:inline">Install Browser</span>
                               </button>
                          </div>
                     )}
