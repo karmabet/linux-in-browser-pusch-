@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Play, Square, Maximize, Keyboard, Monitor, Cpu, Save, Clipboard, Network, Globe } from 'lucide-react';
+import { Play, Square, Maximize, Keyboard, Monitor, Cpu, Save, Clipboard, Network, Globe, Shield } from 'lucide-react';
 
 declare global {
   interface Window {
@@ -394,6 +394,16 @@ export default function App() {
       }, 200);
   };
 
+  const installCyberTools = () => {
+      if (!emulatorRef.current) return;
+      canvasRef.current?.focus();
+      setTimeout(() => {
+          emulatorRef.current.keyboard_send_text("tce-load -wi nmap tcpdump && clear && echo 'Security tools installed! Try typing: nmap -h'\n");
+          setToastMessage("Installing basic security tools (nmap, tcpdump)...");
+          setTimeout(() => setToastMessage(null), 3000);
+      }, 200);
+  };
+
   const handlePaste = async () => {
       if (!emulatorRef.current) return;
       try {
@@ -549,6 +559,15 @@ export default function App() {
                               >
                                   <Globe className="w-3.5 h-3.5" /> 
                                   <span className="hidden sm:inline">Install Browser</span>
+                              </button>
+
+                              <button 
+                                  onClick={installCyberTools}
+                                  className="px-2 py-1.5 bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white rounded border border-white/10 text-[10px] sm:text-xs font-mono transition-colors flex items-center gap-1.5"
+                                  title="Install Basic Security Tools (nmap, tcpdump)"
+                              >
+                                  <Shield className="w-3.5 h-3.5" /> 
+                                  <span className="hidden sm:inline">Install Cyber Tools</span>
                               </button>
                          </div>
                     )}
