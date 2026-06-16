@@ -566,7 +566,7 @@ export default function App() {
                                   title="Setup Internet Connection"
                               >
                                   <Network className="w-3.5 h-3.5" /> 
-                                  <span className="hidden lg:inline">Connect Net</span>
+                                  <span className="hidden sm:inline">Connect Net</span>
                               </button>
                               
                               <button 
@@ -575,7 +575,7 @@ export default function App() {
                                   title="Install Links Browser"
                               >
                                   <Globe className="w-3.5 h-3.5" /> 
-                                  <span className="hidden lg:inline">Install Browser</span>
+                                  <span className="hidden sm:inline">Install Browser</span>
                               </button>
                          </div>
                     )}
