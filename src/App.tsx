@@ -169,37 +169,6 @@ export default function App() {
      return () => document.removeEventListener('pointerlockchange', handlePointerLockChange);
   }, []);
 
-  // Pointer lock mouse input
-  useEffect(() => {
-      const handleMouseMove = (e: MouseEvent) => {
-          if (document.pointerLockElement === canvasRef.current && emulatorRef.current) {
-              emulatorRef.current.mouse_move(e.movementX, e.movementY, 0, 0);
-          }
-      };
-
-      const handleMouseDown = (e: MouseEvent) => {
-          if (document.pointerLockElement === canvasRef.current && emulatorRef.current) {
-              emulatorRef.current.mouse_click(e.button === 0 ? 1 : 0, e.button === 2 ? 1 : 0, 0);
-          }
-      };
-
-      const handleMouseUp = (e: MouseEvent) => {
-          if (document.pointerLockElement === canvasRef.current && emulatorRef.current) {
-              emulatorRef.current.mouse_click(0, 0, 0);
-          }
-      };
-
-      document.addEventListener("mousemove", handleMouseMove);
-      document.addEventListener("mousedown", handleMouseDown);
-      document.addEventListener("mouseup", handleMouseUp);
-      
-      return () => {
-          document.removeEventListener("mousemove", handleMouseMove);
-          document.removeEventListener("mousedown", handleMouseDown);
-          document.removeEventListener("mouseup", handleMouseUp);
-      };
-  }, []);
-
   // Cleanup Emulator on Unmount
   useEffect(() => {
     return () => {
@@ -227,10 +196,12 @@ export default function App() {
     if (emulatorRef.current && systemState === 'running') {
         emulatorRef.current.keyboard_set_status(true);
         canvasRef.current?.focus();
-        try {
-            await canvasRef.current?.requestPointerLock();
-        } catch (e) {
-            console.error("Pointer lock failed:", e);
+        if (!isPointerLocked) {
+            try {
+                await canvasRef.current?.requestPointerLock();
+            } catch (e) {
+                console.error("Pointer lock failed:", e);
+            }
         }
     }
   };
@@ -526,28 +497,30 @@ export default function App() {
         
                {/* VM Container */}
                <div className="flex-1 flex items-center justify-center overflow-hidden w-full relative">
-                   {/* Explicit CSS zoom handles perfect scaling mapped to original pixel tracking */}
-                   <div ref={screenContainerRef} className="relative overflow-hidden" style={{ zoom: zoom, width: 800, height: 600, backgroundColor: '#000' }}>
-                       <div ref={textFallbackRef} className="absolute inset-0 whitespace-pre font-mono text-slate-300 pointer-events-none overflow-hidden" style={{ fontSize: '14px', lineHeight: '14px' }}></div>
-                       <canvas 
-                           ref={canvasRef} 
-                           onClick={handleCanvasClick} 
-                           onTouchStart={handleTouchStart}
-                           onTouchMove={handleTouchMove}
-                           onTouchEnd={handleTouchEnd}
-                           onTouchCancel={handleTouchEnd}
-                           className="block absolute inset-0 w-full h-full cursor-crosshair focus:outline-none" 
-                           tabIndex={0} 
-                           style={{ touchAction: 'none' }}
-                       ></canvas>
-                       
-                       {systemState === 'running' && !isPointerLocked && (
-                           <div className="absolute inset-x-0 bottom-4 pointer-events-none flex justify-center z-10">
-                               <div className="bg-black/80 backdrop-blur text-white px-4 py-2 rounded-full text-xs font-mono border border-white/20 shadow-xl">
-                                   Click to capture mouse — Press ESC to release
+                   {/* Explicit CSS transform wrapper handles perfect scaling mapped to original pixel tracking */}
+                   <div style={{ width: 800 * zoom, height: 600 * zoom, position: 'relative' }}>
+                       <div ref={screenContainerRef} className="absolute top-0 left-0 overflow-hidden" style={{ transform: `scale(${zoom})`, transformOrigin: 'top left', width: 800, height: 600, backgroundColor: '#000' }}>
+                           <div ref={textFallbackRef} className="absolute inset-0 whitespace-pre font-mono text-slate-300 pointer-events-none overflow-hidden" style={{ fontSize: '14px', lineHeight: '14px' }}></div>
+                           <canvas 
+                               ref={canvasRef} 
+                               onClick={handleCanvasClick} 
+                               onTouchStart={handleTouchStart}
+                               onTouchMove={handleTouchMove}
+                               onTouchEnd={handleTouchEnd}
+                               onTouchCancel={handleTouchEnd}
+                               className="block absolute inset-0 w-full h-full cursor-crosshair focus:outline-none" 
+                               tabIndex={0} 
+                               style={{ touchAction: 'none' }}
+                           ></canvas>
+                           
+                           {systemState === 'running' && !isPointerLocked && (
+                               <div className="absolute inset-x-0 bottom-4 pointer-events-none flex justify-center z-10">
+                                   <div className="bg-black/80 backdrop-blur text-white px-4 py-2 rounded-full text-xs font-mono border border-white/20 shadow-xl" style={{ transform: `scale(${1/zoom})` }}>
+                                       Click to capture mouse — Press ESC to release
+                                   </div>
                                </div>
-                           </div>
-                       )}
+                           )}
+                       </div>
                    </div>
                </div>
         

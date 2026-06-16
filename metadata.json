@@ -1,6 +1,6 @@
 {
-  "name": "Web Linux Emulator",
-  "description": "A client-side Linux emulator using v86 and WebAssembly to run a full Linux desktop environment entirely in the browser.",
+  "name": "CoreLinux - Browser OS",
+  "description": "A client-side Linux emulator using v86 and WebAssembly to run a full Linux desktop environment entirely in the browser. Fast, local, and private.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
