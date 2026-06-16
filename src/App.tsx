@@ -417,7 +417,7 @@ export default function App() {
       if (!emulatorRef.current) return;
       canvasRef.current?.focus();
       setTimeout(() => {
-          emulatorRef.current.keyboard_send_text("tce-load -wi links && links http://google.com\n");
+          emulatorRef.current.keyboard_send_text("tce-load -wi links && clear && links https://google.com\n");
           setToastMessage("Installing & launching text browser...");
           setTimeout(() => setToastMessage(null), 3000);
       }, 200);
