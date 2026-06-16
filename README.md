@@ -1,20 +1,62 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
-</div>
+# CoreLinux - Browser OS
 
-# Run and deploy your AI Studio app
+CoreLinux is a powerful, client-side Linux environment that runs entirely within your web browser using WebAssembly. It provides a fast, private, and accessible local Linux desktop experience without requiring any virtual machines or dedicated hardware.
 
-This contains everything you need to run your app locally.
+## Features
 
-View your app in AI Studio: https://ai.studio/apps/ad8b23d0-9238-438e-ac00-1b7fd7b5317e
+- **In-Browser Execution:** Powered by WebAssembly, running entirely on the client side.
+- **Privacy First:** No server-side processing. Your files and sessions stay local.
+- **Built-in Tools:** 
+  - Utilities like python, nano, links
+  - Basic security tools (nmap, tcpdump) integrated.
+- **State Persistence:** Local storage mechanics to keep your workflow intact.
+- **Full Screen & Pointer Lock:** Immersive desktop-like experience.
 
-## Run Locally
+## Getting Started
 
-**Prerequisites:**  Node.js
+### Prerequisites
 
+- Node.js (v18 or higher recommended)
+- npm or yarn
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+### Installation
+
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/yourusername/corelinux.git
+   cd corelinux
+   ```
+
+2. Install dependencies:
+   ```bash
+   npm install
+   ```
+
+3. Run the development server:
+   ```bash
+   npm run dev
+   ```
+
+4. Open your browser and navigate to `http://localhost:3000`.
+
+## Building for Production
+
+To create a production build:
+
+```bash
+npm run build
+```
+
+This will output the static files into the `dist` directory, which can be served using any standard web server.
+
+## Technologies Used
+
+- React 18
+- TypeScript
+- Vite
+- WebAssembly (v86)
+- Tailwind CSS
+
+## License
+
+This project is licensed under the MIT License.
