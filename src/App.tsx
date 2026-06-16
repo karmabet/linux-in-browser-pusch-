@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Play, Square, Maximize, Keyboard, Monitor, Cpu, Save, Clipboard } from 'lucide-react';
+import { Play, Square, Maximize, Keyboard, Monitor, Cpu, Save, Clipboard, Network } from 'lucide-react';
 
 declare global {
   interface Window {
@@ -25,6 +25,74 @@ export default function App() {
   
   const emulatorRef = useRef<any>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  // Touch gesture refs
+  const longPressTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const dragStartedRef = useRef(false);
+  const lastTouchYRef = useRef<number | null>(null);
+
+  const dispatchMouseEvent = (type: string, clientX: number, clientY: number, button: number) => {
+      if (!canvasRef.current) return;
+      const event = new MouseEvent(type, {
+          view: window,
+          bubbles: true,
+          cancelable: true,
+          clientX: clientX,
+          clientY: clientY,
+          button: button,
+          buttons: button === 2 ? 2 : (button === 0 ? 1 : 0),
+      });
+      canvasRef.current.dispatchEvent(event);
+  };
+
+  const dispatchWheelEvent = (clientX: number, clientY: number, deltaY: number) => {
+      if (!canvasRef.current) return;
+      const event = new WheelEvent('wheel', {
+          view: window,
+          bubbles: true,
+          cancelable: true,
+          clientX: clientX,
+          clientY: clientY,
+          deltaY: deltaY,
+      });
+      canvasRef.current.dispatchEvent(event);
+  };
+
+  const handleTouchStart = (e: React.TouchEvent<HTMLCanvasElement>) => {
+      if (e.touches.length === 1) {
+          dragStartedRef.current = false;
+          const touch = e.touches[0];
+          longPressTimerRef.current = setTimeout(() => {
+              if (!dragStartedRef.current) {
+                  dispatchMouseEvent('mousedown', touch.clientX, touch.clientY, 2);
+                  dispatchMouseEvent('mouseup', touch.clientX, touch.clientY, 2);
+                  setToastMessage("Right Click simulated");
+                  setTimeout(() => setToastMessage(null), 1500);
+              }
+          }, 600);
+      } else if (e.touches.length === 2) {
+          if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
+          lastTouchYRef.current = e.touches[0].clientY;
+      }
+  };
+
+  const handleTouchMove = (e: React.TouchEvent<HTMLCanvasElement>) => {
+      dragStartedRef.current = true;
+      if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
+      
+      if (e.touches.length === 2 && lastTouchYRef.current !== null) {
+          const deltaY = lastTouchYRef.current - e.touches[0].clientY;
+          lastTouchYRef.current = e.touches[0].clientY;
+          // Multiply for faster scroll
+          dispatchWheelEvent(e.touches[0].clientX, e.touches[0].clientY, deltaY * 4);
+      }
+  };
+
+  const handleTouchEnd = (e: React.TouchEvent<HTMLCanvasElement>) => {
+      if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
+      lastTouchYRef.current = null;
+  };
+
 
 // Load expected libraries
   useEffect(() => {
@@ -196,6 +264,7 @@ export default function App() {
                   cdrom: { url: "/bios/linux.iso" },
                   autostart: true,
                   boot_order: 0x132,
+                  network_relay_url: "wss://relay.widgetry.org/",
               };
               
               emulatorRef.current = new window.V86(v86Config);
@@ -334,6 +403,16 @@ export default function App() {
       }
   };
 
+  const setupNetwork = () => {
+      if (!emulatorRef.current) return;
+      canvasRef.current?.focus();
+      setTimeout(() => {
+          emulatorRef.current.keyboard_send_text("sudo udhcpc\n");
+          setToastMessage("Network setup command sent");
+          setTimeout(() => setToastMessage(null), 3000);
+      }, 200);
+  };
+
   const handlePaste = async () => {
       if (!emulatorRef.current) return;
       try {
@@ -440,7 +519,17 @@ export default function App() {
                    {/* Explicit CSS zoom handles perfect scaling mapped to original pixel tracking */}
                    <div ref={screenContainerRef} className="relative overflow-hidden" style={{ zoom: zoom, width: 800, height: 600, backgroundColor: '#000' }}>
                        <div ref={textFallbackRef} className="absolute inset-0 whitespace-pre font-mono text-slate-300 pointer-events-none overflow-hidden" style={{ fontSize: '14px', lineHeight: '14px' }}></div>
-                       <canvas ref={canvasRef} onClick={handleCanvasClick} className="block absolute inset-0 w-full h-full cursor-crosshair focus:outline-none" tabIndex={0} style={{ touchAction: 'none' }}></canvas>
+                       <canvas 
+                           ref={canvasRef} 
+                           onClick={handleCanvasClick} 
+                           onTouchStart={handleTouchStart}
+                           onTouchMove={handleTouchMove}
+                           onTouchEnd={handleTouchEnd}
+                           onTouchCancel={handleTouchEnd}
+                           className="block absolute inset-0 w-full h-full cursor-crosshair focus:outline-none" 
+                           tabIndex={0} 
+                           style={{ touchAction: 'none' }}
+                       ></canvas>
                        
                        {systemState === 'running' && !isPointerLocked && (
                            <div className="absolute inset-x-0 bottom-4 pointer-events-none flex justify-center z-10">
@@ -459,7 +548,18 @@ export default function App() {
                          System Running
                     </div>
 
-
+                    {systemState === 'running' && (
+                         <div className="flex items-center group ml-2 shrink-0">
+                              <button 
+                                  onClick={setupNetwork}
+                                  className="px-2 py-1.5 bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white rounded border border-white/10 text-[10px] sm:text-xs font-mono transition-colors flex items-center gap-1.5"
+                                  title="Setup Internet Connection"
+                              >
+                                  <Network className="w-3.5 h-3.5" /> 
+                                  <span className="hidden lg:inline">Connect Net</span>
+                              </button>
+                         </div>
+                    )}
 
                     {/* Compact Save Slots */}
                     <div className="flex flex-1 justify-center sm:justify-start md:justify-center items-center gap-1 sm:gap-2 px-2 shrink">
