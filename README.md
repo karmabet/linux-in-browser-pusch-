@@ -1,62 +1,20 @@
-# CoreLinux - Browser OS
+# CoreLinux in Browser
 
-CoreLinux is a powerful, client-side Linux environment that runs entirely within your web browser using WebAssembly. It provides a fast, private, and accessible local Linux desktop experience without requiring any virtual machines or dedicated hardware.
+CoreLinux is a browser front end for a **32-bit x86 Tiny Core Linux 17.0 desktop** emulated by v86. The shipped app entry is `index.html` → `src/main.tsx` → `src/App.tsx`. The guest ISO is `public/bios/linux.iso`; it contains Linux kernel 6.18.2, BusyBox 1.36.1, and the listed desktop extensions, including FLTK, FLWM, Xvesa, Xprogs, and wbar. The ISO's `cde/onboot.lst` records the extensions loaded at boot.
 
-## Features
+## Run locally
 
-- **In-Browser Execution:** Powered by WebAssembly, running entirely on the client side.
-- **Privacy First:** No server-side processing. Your files and sessions stay local.
-- **Built-in Tools:** 
-  - Utilities like python, nano, links
-  - Basic security tools (nmap, tcpdump) integrated.
-- **State Persistence:** Local storage mechanics to keep your workflow intact.
-- **Full Screen & Pointer Lock:** Immersive desktop-like experience.
-
-## Getting Started
-
-### Prerequisites
-
-- Node.js (v18 or higher recommended)
-- npm or yarn
-
-### Installation
-
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/yourusername/corelinux.git
-   cd corelinux
-   ```
-
-2. Install dependencies:
-   ```bash
-   npm install
-   ```
-
-3. Run the development server:
-   ```bash
-   npm run dev
-   ```
-
-4. Open your browser and navigate to `http://localhost:3000`.
-
-## Building for Production
-
-To create a production build:
-
-```bash
-npm run build
+```sh
+npm install
+npm run dev
 ```
 
-This will output the static files into the `dist` directory, which can be served using any standard web server.
+Build the static app with `npm run build`; Vite writes it to `dist/`. The production build uses the pinned local v86 package (`0.5.471+g94faf3d`) and its local WebAssembly runtime.
 
-## Technologies Used
+For offline use, open the app with `?offline=1`. Offline mode omits network relay setup and network dependent actions. Emulator snapshots are stored in the browser's IndexedDB on that device/profile; clearing browser storage removes them.
 
-- React 18
-- TypeScript
-- Vite
-- WebAssembly (v86)
-- Tailwind CSS
+The guest image is a minimal desktop. Availability of commands depends on the included Tiny Core image and extensions; this repository does not promise Python, nano, links, nmap, or tcpdump as preinstalled tools.
 
-## License
+## Credits and notices
 
-This project is licensed under the MIT License.
+See the [offline-readable credits and license notices](public/credits.html), including upstream source references and copies of the applicable license texts. The project README's MIT statement covers this project's own code; guest OS and emulator components retain their separate notices and terms.
