@@ -61,7 +61,7 @@ export default function App() {
   const sendGuestText = async (text: string) => {
     const emu=emulatorRef.current;if(!emu)throw Error('VM is not running');
     emu.keyboard_set_status(true);
-    try { await emu.keyboard_send_text(text); }
+    try { await emu.keyboard_send_text(text, 3); }
     finally { if(emulatorRef.current===emu)emu.keyboard_set_status(!!screenContainerRef.current?.contains(document.activeElement)); }
   };
 
