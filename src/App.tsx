@@ -70,12 +70,12 @@ export default function App() {
     if (!vm?.is_running() || caseBusy || snapshotBusy || caseFiles.length !== 2) return;
     setCaseBusy(true);
     try {
-      // File contents are base64 data, never interpolated as shell syntax. Paths are fixed.
-      // User must intentionally focus an idle guest shell before pressing this button.
+      // Quote the evidence as shell data. TinyCore's minimal BusyBox has no base64 applet.
+      // User must intentionally open an idle guest shell before pressing this button.
+      const quote = (value: string) => "'" + value.replaceAll("'", "'\"'\"'") + "'";
       const marker = crypto.getRandomValues(new Uint32Array(1))[0].toString(16);
-      const writes = caseFiles.map(file => `printf '%s' '${btoa(file.text)}' | base64 -d > '/home/tc/nexus-case/${file.name}'`).join(' && ');
-      await sendGuestText(`mkdir -p /home/tc/nexus-case && ${writes} && printf '\nCASE_READY_%s\n' '${marker}'
-`);
+      const writes = caseFiles.map(file => `printf '%s' ${quote(file.text)} > '/home/tc/nexus-case/${file.name}'`).join(' && ');
+      await sendGuestText(`mkdir -p /home/tc/nexus-case && ${writes} && printf 'CASE_READY_%s\\n' '${marker}'\n`);
       const ok = await vm.wait_until_vga_screen_contains(`CASE_READY_${marker}`, {timeout_msec: 30000});
       setToastMessage(ok ? 'Case logs written to /home/tc/nexus-case. Use cat and grep to investigate.' : 'Guest did not confirm the write. Open an idle guest terminal and try again.');
     } catch (error) {
