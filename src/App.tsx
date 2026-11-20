@@ -534,7 +534,7 @@ export default function App() {
                  <p className="text-[10px] uppercase tracking-widest text-slate-500 mb-2">Resume your saved VM</p>
                  <div className="flex gap-2">{[1,2,3].filter(n => saveSlots[`save-${n}`]).map(n => <button key={n} disabled={!v86Loaded || startBusy} onClick={() => startSaved(`save-${n}`)} title={saveSlots[`save-${n}`] || ''} className="flex-1 rounded border border-white/15 py-2 text-xs text-slate-300 hover:bg-white/10 disabled:opacity-40">Start Slot {n}</button>)}</div>
                </div>}
-               <a href={offlineMode ? "./credits.html?offline=1" : "./credits.html"} className="mt-5 text-xs text-slate-400 underline underline-offset-4">Tiny Core Linux · v86 · Credits &amp; licenses</a>
+               <a href={`./credits.html?offline=${offlineMode ? '1' : '0'}`} className="mt-5 text-xs text-slate-400 underline underline-offset-4">Tiny Core Linux · v86 · Credits &amp; licenses</a>
            </div>
       </div>
 

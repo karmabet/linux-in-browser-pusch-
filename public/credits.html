@@ -33,8 +33,9 @@
 
   <h2>Interface</h2><p>CoreLinux interface code: <a href="./notices/CoreLinux-MIT.txt">MIT</a>. React/React DOM: <a href="./notices/React-MIT.txt">MIT, Meta contributors</a>. Lucide icons: <a href="./notices/Lucide-ISC.txt">ISC/MIT, Lucide and Feather contributors</a>.</p>
   <h2>Source downloads and component rights</h2>
+<p><a id="guest-notices" href="./component-notices.html">Guest component copyright and license texts</a> — original notices are included locally and remain readable offline.</p>
 <p>Sources, available Tiny Core build scripts, patches, configurations and original license texts are provided in the <a target="_blank" rel="noopener" href="https://github.com/karmabet/nexushacker-third-party-sources/releases/tag/corelinux-17.0">CoreLinux source collection</a>. Read its coverage report for version evidence and remaining provenance checks. It contains third-party material only, not the proprietary NexusHacker game.</p>
 <p>glibc, libxcrypt and libsysfs carry LGPL-family terms; <a href="./notices/LGPL-2.1.txt">LGPL 2.1</a> is included. TinyX includes GPLv3 changes. FLTK has its own linking exception. Each component's original license and copyrights govern its files.</p>
 <p>The unmodified guest ISO runs independently inside the emulator. The guest components' rights to source, modification and redistribution remain unaffected by the game's proprietary terms. No written source offer is substituted for the downloadable material.</p>
-<script>if(new URLSearchParams(location.search).get('offline')==='1')document.getElementById('back').href='./index.html?offline=1';</script></body>
+<script>const mode=new URLSearchParams(location.search).get('offline');if(mode==='0'||mode==='1'){document.getElementById('back').href='./index.html?offline='+mode;document.getElementById('guest-notices').href='./component-notices.html?offline='+mode;}</script></body>
 </html>
