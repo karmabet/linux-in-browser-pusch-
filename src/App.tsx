@@ -177,7 +177,7 @@ export default function App() {
   // Pointer lock tracking
   useEffect(() => {
      const handlePointerLockChange = () => {
-         setIsPointerLocked(document.pointerLockElement === canvasRef.current);
+         setIsPointerLocked(document.pointerLockElement === screenContainerRef.current);
      };
      document.addEventListener('pointerlockchange', handlePointerLockChange);
      return () => document.removeEventListener('pointerlockchange', handlePointerLockChange);
@@ -198,7 +198,7 @@ export default function App() {
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
         if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) {
-            if (document.activeElement === canvasRef.current) {
+            if (screenContainerRef.current?.contains(document.activeElement)) {
                 e.preventDefault();
             }
         }
@@ -210,10 +210,10 @@ export default function App() {
   const handleCanvasClick = async () => {
     if (emulatorRef.current && systemState === 'running') {
         emulatorRef.current.keyboard_set_status(true);
-        canvasRef.current?.focus();
+        screenContainerRef.current?.focus();
         if (!isPointerLocked) {
             try {
-                await canvasRef.current?.requestPointerLock();
+                await screenContainerRef.current?.requestPointerLock();
             } catch (e) {
                 console.error("Pointer lock failed:", e);
             }
@@ -271,7 +271,7 @@ export default function App() {
               });
               emu.add_listener("emulator-ready", () => {
                   console.log("VM ready");
-                  emu.keyboard_set_status(document.activeElement === canvasRef.current);
+                  emu.keyboard_set_status(screenContainerRef.current?.contains(document.activeElement));
                   setSystemState('running');
               });
               emu.add_listener("emulator-started", () => setSystemState('running'));
@@ -284,7 +284,7 @@ export default function App() {
   }, []);
 
   const handleStop = () => {
-    if(document.pointerLockElement === canvasRef.current)document.exitPointerLock();
+    if(document.pointerLockElement === screenContainerRef.current)document.exitPointerLock();
     if (emulatorRef.current) {
          try { emulatorRef.current.destroy() } catch(e){}
          emulatorRef.current = null;
@@ -294,7 +294,7 @@ export default function App() {
 
   const toggleFullscreen = () => {
       if (!document.fullscreenElement) {
-          const el = canvasRef.current as any;
+          const el = screenContainerRef.current as any;
           if (!el) return;
           if (el.requestFullscreen) el.requestFullscreen();
           else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
@@ -473,14 +473,11 @@ export default function App() {
                <div className="flex-1 flex items-center justify-center overflow-hidden w-full relative">
                    {/* Explicit CSS transform wrapper handles perfect scaling mapped to original pixel tracking */}
                    <div style={{ width: 800 * zoom, height: 600 * zoom, position: 'relative' }}>
-                       <div ref={screenContainerRef} className="absolute top-0 left-0 overflow-hidden" style={{ transform: `scale(${zoom})`, transformOrigin: 'top left', width: 800, height: 600, backgroundColor: '#000' }}>
+                       <div ref={screenContainerRef} tabIndex={0} onClick={handleCanvasClick} onFocus={() => emulatorRef.current?.keyboard_set_status(true)} onBlur={() => emulatorRef.current?.keyboard_set_status(false)} onContextMenu={event => event.preventDefault()} className="absolute top-0 left-0 overflow-hidden" style={{ transform: `scale(${zoom})`, transformOrigin: 'top left', width: 800, height: 600, backgroundColor: '#000' }}>
                            <div ref={textFallbackRef} className="absolute inset-0 whitespace-pre font-mono text-slate-300 pointer-events-none overflow-hidden" style={{ fontSize: '14px', lineHeight: '14px' }}></div>
                            <canvas 
                                ref={canvasRef} 
-                               onClick={handleCanvasClick}
-                               onFocus={() => emulatorRef.current?.keyboard_set_status(true)}
-                               onBlur={() => emulatorRef.current?.keyboard_set_status(false)}
-                               onContextMenu={event => event.preventDefault()}
+
                                onTouchStart={handleTouchStart}
                                onTouchMove={handleTouchMove}
                                onTouchEnd={handleTouchEnd}
