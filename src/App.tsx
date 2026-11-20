@@ -40,6 +40,13 @@ export default function App() {
   const emulatorRef = useRef<any>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
+  const sendGuestText = async (text: string) => {
+    const emu=emulatorRef.current;if(!emu)throw Error('VM is not running');
+    emu.keyboard_set_status(true);
+    try { await emu.keyboard_send_text(text); }
+    finally { if(emulatorRef.current===emu)emu.keyboard_set_status(!!screenContainerRef.current?.contains(document.activeElement)); }
+  };
+
   // Touch gesture refs
   const longPressTimerRef = useRef<NodeJS.Timeout | null>(null);
   const dragStartedRef = useRef(false);
@@ -315,7 +322,7 @@ export default function App() {
       if (ev.inputType === 'deleteContentBackward') {
           emulatorRef.current?.keyboard_send_scancodes([0x0E,0x8E]); // Backspace
       } else if (ev.data && emulatorRef.current) {
-          emulatorRef.current.keyboard_send_text(ev.data);
+          void sendGuestText(ev.data).catch(() => setToastMessage("Keyboard input failed"));
       }
       e.currentTarget.value = '';
   };
@@ -362,7 +369,7 @@ export default function App() {
       canvasRef.current?.focus();
       setTimeout(() => {
           emulatorRef.current.keyboard_send_text("tce-load -wi links && clear && links https://google.com\n");
-          setToastMessage("Installing & launching text browser...");
+          setToastMessage("Browser command sent to the guest terminal.");
           setTimeout(() => setToastMessage(null), 3000);
       }, 200);
   };
@@ -372,14 +379,12 @@ export default function App() {
       try {
           const text = await navigator.clipboard.readText();
           if (!text) return;
-          for (const char of text) {
-              emulatorRef.current.keyboard_send_text(char);
-          }
+          await sendGuestText(text);
           setToastMessage(`Pasted ${text.length} characters`);
           setTimeout(() => setToastMessage(null), 3000);
       } catch (e) {
           console.error(e);
-          setToastMessage("Clipboard access denied — click inside the VM first, then try again");
+          setToastMessage("Paste failed — check clipboard access and that the VM is running");
           setTimeout(() => setToastMessage(null), 3000);
       }
   };
