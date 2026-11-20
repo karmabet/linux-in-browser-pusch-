@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Play, Square, Maximize, Keyboard, Monitor, Cpu, Save, Clipboard, Network, Globe, Shield } from 'lucide-react';
+import { Play, Square, Maximize, Keyboard, Monitor, Cpu, Save, Clipboard, Network, Globe } from 'lucide-react';
 
 declare global {
   interface Window {
@@ -8,8 +8,22 @@ declare global {
   }
 }
 
+const offlineFlag = new URLSearchParams(location.search).get('offline');
+const offlineMode = offlineFlag === '1' || (location.protocol === 'nexus:' && offlineFlag !== '0');
+async function snapshotStore<T>(mode: IDBTransactionMode, action: (store: IDBObjectStore) => IDBRequest<T>): Promise<T> {
+ return new Promise((resolve,reject) => {
+  const open = indexedDB.open('vm-saves',2);
+  open.onupgradeneeded = () => { if(!open.result.objectStoreNames.contains('saves'))open.result.createObjectStore('saves',{keyPath:'slot'}); };
+  open.onerror = () => reject(open.error);
+  open.onsuccess = () => { const db=open.result;const tx=db.transaction('saves',mode);const req=action(tx.objectStore('saves'));let value:T;
+   req.onsuccess=()=>{value=req.result};tx.oncomplete=()=>{db.close();resolve(value)};tx.onerror=tx.onabort=()=>{db.close();reject(tx.error || req.error || Error('Snapshot transaction failed'));};
+  };
+ });
+}
 export default function App() {
   const [systemState, setSystemState] = useState<'dashboard' | 'loading' | 'running'>('dashboard');
+  const [snapshotBusy,setSnapshotBusy] = useState(false);
+  const bootTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [progress, setProgress] = useState<number>(0);
   const [ram, setRam] = useState(256);
   const [v86Loaded, setV86Loaded] = useState<boolean>(false);
@@ -172,6 +186,7 @@ export default function App() {
   // Cleanup Emulator on Unmount
   useEffect(() => {
     return () => {
+      if (bootTimer.current)clearTimeout(bootTimer.current);
       if (emulatorRef.current) {
         try { emulatorRef.current.destroy(); } catch(e) {}
         emulatorRef.current = null;
@@ -215,7 +230,7 @@ export default function App() {
       setSystemState('loading');
       setProgress(0);
       
-      setTimeout(() => {
+      bootTimer.current = setTimeout(() => {
           if (!screenContainerRef.current) return;
           
           if (emulatorRef.current) {
@@ -226,7 +241,7 @@ export default function App() {
 
           try {
               const v86Config: any = {
-                  wasm_path: "https://unpkg.com/v86/build/v86.wasm",
+                  wasm_path: "./v86/v86.wasm",
                   memory_size: memory * 1024 * 1024,
                   vga_memory_size: 8 * 1024 * 1024,
                   screen_container: screenContainerRef.current,
@@ -235,7 +250,7 @@ export default function App() {
                   cdrom: { url: "./bios/linux.iso" },
                   autostart: true,
                   boot_order: 0x132,
-                  network_relay_url: "wss://relay.widgetry.org/",
+                  ...(offlineMode ? {} : { network_relay_url: "wss://relay.widgetry.org/" }),
               };
               
               emulatorRef.current = new window.V86(v86Config);
@@ -247,14 +262,16 @@ export default function App() {
                   if (e && typeof e.loaded === 'number' && e.total > 0) {
                       const p = Math.min(100, Math.round((e.loaded / e.total) * 100));
                       setProgress(p);
-                      if (p >= 100) {
-                           setTimeout(() => setSystemState('running'), 500);
-                      }
+
                   }
               });
 
+              emu.add_listener("download-error", (event: any) => {
+                  setToastMessage("VM resource could not be loaded: " + event.file_name);setSystemState("dashboard");void emu.destroy();
+              });
               emu.add_listener("emulator-ready", () => {
                   console.log("VM ready");
+                  emu.keyboard_set_status(document.activeElement === canvasRef.current);
                   setSystemState('running');
               });
               emu.add_listener("emulator-started", () => setSystemState('running'));
@@ -267,6 +284,7 @@ export default function App() {
   }, []);
 
   const handleStop = () => {
+    if(document.pointerLockElement === canvasRef.current)document.exitPointerLock();
     if (emulatorRef.current) {
          try { emulatorRef.current.destroy() } catch(e){}
          emulatorRef.current = null;
@@ -295,7 +313,7 @@ export default function App() {
   const handleMobileKeyboardInput = (e: React.FormEvent<HTMLInputElement>) => {
       const ev = e.nativeEvent as InputEvent;
       if (ev.inputType === 'deleteContentBackward') {
-          emulatorRef.current?.keyboard_send_scancodes([0x0E]); // Backspace
+          emulatorRef.current?.keyboard_send_scancodes([0x0E,0x8E]); // Backspace
       } else if (ev.data && emulatorRef.current) {
           emulatorRef.current.keyboard_send_text(ev.data);
       }
@@ -304,78 +322,33 @@ export default function App() {
 
   const handleMobileKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
       if (e.key === 'Enter') {
-          emulatorRef.current?.keyboard_send_scancodes([0x1C]); // Enter
+          e.preventDefault();
+          emulatorRef.current?.keyboard_send_scancodes([0x1C,0x9C]); // Enter
       } else if (e.key === 'Backspace') {
-          emulatorRef.current?.keyboard_send_scancodes([0x0E]); // Backspace
+          e.preventDefault();
+          emulatorRef.current?.keyboard_send_scancodes([0x0E,0x8E]); // Backspace
       }
   };
 
   const saveToSlot = async (slot: string) => {
-      if (!emulatorRef.current) return;
-      setToastMessage("Saving...");
-      try {
-          emulatorRef.current.stop();
-          const state = await emulatorRef.current.save_state();
-          emulatorRef.current.run();
-          
-          const request = indexedDB.open("vm-saves", 2);
-          request.onsuccess = (e: any) => {
-              const db = e.target.result;
-              const tx = db.transaction("saves", "readwrite");
-              const dateStr = new Date().toLocaleString();
-              tx.objectStore("saves").put({ slot, state, date: dateStr }).onsuccess = () => {
-                  setSaveSlots(prev => ({...prev, [slot]: dateStr}));
-                  setToastMessage(`✅ Saved to Slot ${slot.replace('save-', '')}`);
-                  setTimeout(() => setToastMessage(null), 3000);
-              };
-          };
-      } catch (err) {
-          emulatorRef.current?.run();
-          console.error(err);
-          setToastMessage("Save failed.");
-          setTimeout(() => setToastMessage(null), 3000);
-      }
+    const emu=emulatorRef.current;if(!emu || snapshotBusy)return;
+    setSnapshotBusy(true);setToastMessage('Saving…');
+    try { await emu.stop();const state=await emu.save_state();const date=new Date().toLocaleString();
+      await snapshotStore('readwrite', store=>store.put({slot,state,date}));setSaveSlots(prev=>({...prev,[slot]:date}));setToastMessage('Saved to Slot '+slot.replace('save-',''));
+    } catch(error){console.error(error);setToastMessage('Save failed. Existing snapshots are unchanged.');}
+    finally { if(emulatorRef.current===emu)await emu.run();setSnapshotBusy(false);setTimeout(()=>setToastMessage(null),3000); }
   };
-
-  const loadFromSlot = (slot: string) => {
-      if (!emulatorRef.current) return;
-      
-      try {
-          const request = indexedDB.open("vm-saves", 2);
-          request.onsuccess = (e: any) => {
-              const db = e.target.result;
-              const tx = db.transaction("saves", "readonly");
-              const req = tx.objectStore("saves").get(slot);
-              req.onsuccess = (ev: any) => {
-                  if (!ev.target.result) {
-                      setToastMessage(`Slot ${slot.replace('save-', '')} is empty`);
-                      setTimeout(() => setToastMessage(null), 3000);
-                      return;
-                  }
-                  emulatorRef.current.stop();
-                  emulatorRef.current.restore_state(ev.target.result.state);
-                  emulatorRef.current.run();
-                  setToastMessage(`✅ Loaded Slot ${slot.replace('save-', '')} — ${ev.target.result.date}`);
-                  setTimeout(() => setToastMessage(null), 3000);
-              };
-              req.onerror = () => {
-                  setToastMessage("Load Storage Error");
-                  setTimeout(() => setToastMessage(null), 3000);
-              };
-          };
-          request.onerror = () => {
-              setToastMessage("Load DB Error");
-              setTimeout(() => setToastMessage(null), 3000);
-          };
-      } catch (errIdb) {
-          console.error(errIdb);
-          setToastMessage("Load Catch Error");
-          setTimeout(() => setToastMessage(null), 3000);
-      }
+  const loadFromSlot = async (slot: string) => {
+    const emu=emulatorRef.current;if(!emu || snapshotBusy)return;
+    setSnapshotBusy(true);setToastMessage('Loading…');
+    try { const saved:any=await snapshotStore('readonly',store=>store.get(slot));if(!saved)throw Error('Empty snapshot slot');
+      await emu.stop();await emu.restore_state(saved.state);setToastMessage('Loaded Slot '+slot.replace('save-','')+' — '+saved.date);
+    } catch(error){console.error(error);setToastMessage('Load failed. The snapshot could not be restored.');}
+    finally { if(emulatorRef.current===emu)await emu.run();setSnapshotBusy(false);setTimeout(()=>setToastMessage(null),3000); }
   };
 
   const setupNetwork = () => {
-      if (!emulatorRef.current) return;
+      if (!emulatorRef.current || offlineMode) return;
       canvasRef.current?.focus();
       setTimeout(() => {
           emulatorRef.current.keyboard_send_text("sudo udhcpc\n");
@@ -390,16 +363,6 @@ export default function App() {
       setTimeout(() => {
           emulatorRef.current.keyboard_send_text("tce-load -wi links && clear && links https://google.com\n");
           setToastMessage("Installing & launching text browser...");
-          setTimeout(() => setToastMessage(null), 3000);
-      }, 200);
-  };
-
-  const installCyberTools = () => {
-      if (!emulatorRef.current) return;
-      canvasRef.current?.focus();
-      setTimeout(() => {
-          emulatorRef.current.keyboard_send_text("tce-load -wi nmap tcpdump && clear && echo 'Security tools installed! Try typing: nmap -h'\n");
-          setToastMessage("Installing basic security tools (nmap, tcpdump)...");
           setTimeout(() => setToastMessage(null), 3000);
       }, 200);
   };
@@ -450,7 +413,7 @@ export default function App() {
                </div>
                <h1 className="text-3xl font-bold text-white mb-2 tracking-tight">v86 Emulator</h1>
                <p className="text-slate-400 text-center mb-8 text-sm">
-                   Run a full x86-64 Linux environment natively in your browser.
+                   Tiny Core Linux 17.0 — a 32-bit x86 guest running locally in v86.
                </p>
     
                <div className="w-full mb-8 relative">
@@ -478,6 +441,7 @@ export default function App() {
                    <Play className="w-4 h-4 fill-current" />
                    Start Virtual Machine
                </button>
+               <a href={offlineMode ? "./credits.html?offline=1" : "./credits.html"} className="mt-5 text-xs text-slate-400 underline underline-offset-4">Tiny Core Linux · v86 · Credits &amp; licenses</a>
            </div>
       </div>
 
@@ -513,7 +477,10 @@ export default function App() {
                            <div ref={textFallbackRef} className="absolute inset-0 whitespace-pre font-mono text-slate-300 pointer-events-none overflow-hidden" style={{ fontSize: '14px', lineHeight: '14px' }}></div>
                            <canvas 
                                ref={canvasRef} 
-                               onClick={handleCanvasClick} 
+                               onClick={handleCanvasClick}
+                               onFocus={() => emulatorRef.current?.keyboard_set_status(true)}
+                               onBlur={() => emulatorRef.current?.keyboard_set_status(false)}
+                               onContextMenu={event => event.preventDefault()}
                                onTouchStart={handleTouchStart}
                                onTouchMove={handleTouchMove}
                                onTouchEnd={handleTouchEnd}
@@ -538,10 +505,10 @@ export default function App() {
                <div className="h-14 bg-[#0a0a0a] border-t border-white/5 flex items-center justify-between px-2 sm:px-4 shrink-0 z-40 relative">
                     <div className="flex items-center gap-2 sm:gap-3 text-[10px] sm:text-xs font-mono text-slate-400 shrink-0 hidden md:flex">
                          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.5)]"></span>
-                         System Running
+                         {offlineMode ? "VM Running · Offline" : "VM Running"}
                     </div>
 
-                    {systemState === 'running' && (
+                    {systemState === 'running' && !offlineMode && (
                          <div className="flex items-center group ml-2 shrink-0 gap-1 sm:gap-2">
                               <button 
                                   onClick={setupNetwork}
@@ -561,14 +528,7 @@ export default function App() {
                                   <span className="hidden sm:inline">Install Browser</span>
                               </button>
 
-                              <button 
-                                  onClick={installCyberTools}
-                                  className="px-2 py-1.5 bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white rounded border border-white/10 text-[10px] sm:text-xs font-mono transition-colors flex items-center gap-1.5"
-                                  title="Install Basic Security Tools (nmap, tcpdump)"
-                              >
-                                  <Shield className="w-3.5 h-3.5" /> 
-                                  <span className="hidden sm:inline">Install Cyber Tools</span>
-                              </button>
+
                          </div>
                     )}
 
@@ -581,7 +541,7 @@ export default function App() {
                                  <div key={slotNum} className="flex items-center bg-black/40 rounded border border-white/10 overflow-hidden shrink-0" title={isSaved ? saveSlots[slotKey]! : "Empty Slot"}>
                                      <span className="px-1.5 py-1 text-[10px] sm:text-xs text-slate-500 font-mono bg-white/5 border-r border-white/10 hidden sm:block">{slotNum}</span>
                                      <button 
-                                         onClick={() => saveToSlot(slotKey)} 
+                                         disabled={snapshotBusy} onClick={() => saveToSlot(slotKey)}
                                          className="px-2 py-1.5 hover:bg-white/10 text-slate-400 hover:text-white transition-colors"
                                          title={`Save to Slot ${slotNum}`}
                                      >
@@ -589,7 +549,7 @@ export default function App() {
                                      </button>
                                      <button 
                                          onClick={() => loadFromSlot(slotKey)} 
-                                         disabled={!isSaved} 
+                                         disabled={!isSaved || snapshotBusy}
                                          className="px-2 py-1.5 hover:bg-white/10 text-slate-400 hover:text-white transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
                                          title={isSaved ? `Load Slot ${slotNum}` : `Slot ${slotNum} Empty`}
                                      >

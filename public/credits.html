@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CoreLinux Credits and Notices</title>
+  <style>
+    body { max-width: 56rem; margin: 2rem auto; padding: 0 1rem; color: #e5e7eb; background: #111827; font: 16px/1.55 system-ui, sans-serif; }
+    a { color: #67e8f9; }
+    h1, h2 { line-height: 1.2; }
+    li { margin: .55rem 0; }
+    .note { color: #cbd5e1; }
+  </style>
+</head>
+<body>
+  <p><a id="back" href="./index.html">← Back to CoreLinux</a></p>
+  <h1>Credits and third-party notices</h1>
+  <p>This page is included locally so the credits and license texts remain readable when the app is used offline. License links below point to files in this project.</p>
+
+  <h2>Guest OS: Tiny Core Linux 17.0</h2>
+  <p>The bundled guest is a 32-bit x86 Tiny Core Linux 17.0 desktop. Its ISO identifies Linux kernel <strong>6.18.2-tinycore</strong> and <strong>BusyBox 1.36.1</strong>. The boot extension list includes FLTK, FLWM, Xvesa, Xprogs, wbar, and supporting libraries. Guest components retain their own copyrights and licenses; the GPL license texts are provided here as notices, not as a replacement for component-specific terms.</p>
+  <ul>
+    <li><a href="https://distro.ibiblio.org/tinycorelinux/17.x/x86/release/src/">Tiny Core 17.x x86 release source directory</a></li>
+    <li><a href="https://distro.ibiblio.org/tinycorelinux/17.x/x86/tcz/src/">Tiny Core 17.x x86 extension source directory</a></li>
+    <li>Included license texts: <a href="./notices/GPL-2.0.txt">GPL-2.0</a>, <a href="./notices/GPL-3.0.txt">GPL-3.0</a>.</li>
+  </ul>
+
+  <h2>Emulator: v86 0.5.471+g94faf3d</h2>
+  <p>v86 is the x86 emulator and WebAssembly runtime. The version is pinned in the project dependencies; source reference: <a href="https://github.com/copy/v86/tree/94faf3d">v86 source at 94faf3d</a>. License: <a href="./notices/v86-BSD-2-Clause.txt">BSD 2-Clause</a>.</p>
+
+  <h2>Firmware: SeaBIOS rel-1.16.2</h2>
+  <p>The bundled system BIOS corresponds to SeaBIOS rel-1.16.2. The VGA BIOS is also from the SeaBIOS project. Source reference: <a href="https://github.com/coreboot/seabios/tree/rel-1.16.2">SeaBIOS source at rel-1.16.2</a>. The applicable license texts included here are <a href="./notices/LGPL-3.0.txt">LGPL-3.0</a> for SeaBIOS and <a href="./notices/GPL-3.0.txt">GPL-3.0</a> for the VGA BIOS.</p>
+
+  <h2>Interface</h2><p>CoreLinux interface code: <a href="./notices/CoreLinux-MIT.txt">MIT</a>. React/React DOM: <a href="./notices/React-MIT.txt">MIT, Meta contributors</a>. Lucide icons: <a href="./notices/Lucide-ISC.txt">ISC/MIT, Lucide and Feather contributors</a>.</p>
+  <h2>Source references</h2>
+  <p class="note">These references identify the bundled components and provide license texts. Copyright remains with the respective upstream authors. Tiny Core packages and firmware components may carry additional component-specific notices; consult the linked upstream source directories and the respective project materials for those details.</p>
+<script>if(new URLSearchParams(location.search).get('offline')==='1')document.getElementById('back').href='./index.html?offline=1';</script></body>
+</html>
