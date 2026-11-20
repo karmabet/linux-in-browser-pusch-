@@ -37,6 +37,7 @@ export default function App() {
       setCaseFiles(data.files.map((f: any) => ({name: f.name, text: f.text})));
     };
     window.addEventListener('message', receive);
+    if (window.parent !== window) window.parent.postMessage({type: 'nexus-case-ready'}, '*');
     return () => window.removeEventListener('message', receive);
   }, []);
   const [snapshotBusy,setSnapshotBusy] = useState(false);
