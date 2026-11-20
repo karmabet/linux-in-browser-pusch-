@@ -22,6 +22,27 @@ async function snapshotStore<T>(mode: IDBTransactionMode, action: (store: IDBObj
 }
 export default function App() {
   const [systemState, setSystemState] = useState<'dashboard' | 'loading' | 'running'>('dashboard');
+  const [caseFiles, setCaseFiles] = useState<{name: string; text: string}[]>([]);
+  const [caseBusy, setCaseBusy] = useState(false);
+  useEffect(() => {
+    const receive = (event: MessageEvent) => {
+      if (window.parent === window || event.source !== window.parent) return;
+      const trusted = ['https://nexushacker.com', 'https://www.nexushacker.com', 'nexus://game'];
+      const local = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(event.origin);
+      if (!trusted.includes(event.origin) && !local) return;
+      const data = event.data;
+      if (data?.type !== 'nexus-case-files' || data.version !== 1 || !Array.isArray(data.files) || data.files.length !== 2) return;
+      if (!data.files.every((f: any) => f && ['auth.log', 'export.log'].includes(f.name) && typeof f.text === 'string' && /^[\x09\x0a\x0d\x20-\x7e]*$/.test(f.text) && f.text.length <= 4096)) return;
+      if (new Set(data.files.map((f: any) => f.name)).size !== 2) return;
+      setCaseFiles(data.files.map((f: any) => ({name: f.name, text: f.text})));
+    };
+    window.addEventListener('message', receive);
+    if (window.parent !== window) window.parent.postMessage({type: 'nexus-case-ready'}, '*');
+    return () => window.removeEventListener('message', receive);
+  }, []);
+  const [startBusy, setStartBusy] = useState(false);
+  const activeMemory = useRef(256);
+  const [loadingLabel, setLoadingLabel] = useState('Fetching virtual disk image…');
   const [snapshotBusy,setSnapshotBusy] = useState(false);
   const bootTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [progress, setProgress] = useState<number>(0);
@@ -43,8 +64,26 @@ export default function App() {
   const sendGuestText = async (text: string) => {
     const emu=emulatorRef.current;if(!emu)throw Error('VM is not running');
     emu.keyboard_set_status(true);
-    try { await emu.keyboard_send_text(text); }
+    try { await emu.keyboard_send_text(text, 3); }
     finally { if(emulatorRef.current===emu)emu.keyboard_set_status(!!screenContainerRef.current?.contains(document.activeElement)); }
+  };
+
+  const importCase = async () => {
+    const vm = emulatorRef.current;
+    if (!vm?.is_running() || caseBusy || snapshotBusy || caseFiles.length !== 2) return;
+    setCaseBusy(true);
+    try {
+      // Quote the evidence as shell data. TinyCore's minimal BusyBox has no base64 applet.
+      // User must intentionally open an idle guest shell before pressing this button.
+      const quote = (value: string) => "'" + value.replaceAll("'", "'\"'\"'") + "'";
+      const marker = crypto.getRandomValues(new Uint32Array(1))[0].toString(16);
+      const writes = caseFiles.map(file => `printf '%s' ${quote(file.text)} > '/home/tc/nexus-case/${file.name}'`).join(' && ');
+      await sendGuestText(`mkdir -p /home/tc/nexus-case && ${writes} && printf 'CASE_READY_%s\\n' '${marker}'\n`);
+      const ok = await vm.wait_until_vga_screen_contains(`CASE_READY_${marker}`, {timeout_msec: 30000});
+      setToastMessage(ok ? 'Case logs written to /home/tc/nexus-case. Use cat and grep to investigate.' : 'Guest did not confirm the write. Open an idle guest terminal and try again.');
+    } catch (error) {
+      console.error(error); setToastMessage('Case import failed. Open an idle guest terminal and try again.');
+    } finally { setCaseBusy(false); }
   };
 
   // Touch gesture refs
@@ -228,12 +267,15 @@ export default function App() {
     }
   };
 
-  const startV86 = useCallback(async (memory: number) => {
+  const startV86 = useCallback(async (memory: number, initialState?: ArrayBuffer) => {
       if (!window.V86) {
           console.error("V86 not loaded. Cannot start virtual machine.");
           return;
       }
       
+      activeMemory.current = memory;
+      setRam(memory);
+      setLoadingLabel(initialState ? 'Restoring saved machine state…' : 'Fetching virtual disk image…');
       setSystemState('loading');
       setProgress(0);
       
@@ -255,7 +297,7 @@ export default function App() {
                   bios: { url: "./bios/seabios.bin" },
                   vga_bios: { url: "./bios/vgabios.bin" },
                   cdrom: { url: "./bios/linux.iso" },
-                  autostart: true,
+                  autostart: !initialState,
                   boot_order: 0x132,
                   ...(offlineMode ? {} : { network_relay_url: "wss://relay.widgetry.org/" }),
               };
@@ -276,10 +318,18 @@ export default function App() {
               emu.add_listener("download-error", (event: any) => {
                   setToastMessage("VM resource could not be loaded: " + event.file_name);setSystemState("dashboard");void emu.destroy();
               });
-              emu.add_listener("emulator-ready", () => {
-                  console.log("VM ready");
-                  emu.keyboard_set_status(screenContainerRef.current?.contains(document.activeElement));
-                  setSystemState('running');
+              emu.add_listener("emulator-ready", async () => {
+                  try {
+                    if (initialState) { await emu.restore_state(initialState); await emu.run(); }
+                    emu.keyboard_set_status(screenContainerRef.current?.contains(document.activeElement));
+                    setSystemState('running');
+                  } catch (error) {
+                    console.error(error);
+                    setToastMessage('Snapshot restoration failed. Your saved files are unchanged; normal boot is still available.');
+                    setSystemState('dashboard');
+                    if (emulatorRef.current === emu) emulatorRef.current = null;
+                    void emu.destroy();
+                  }
               });
               emu.add_listener("emulator-started", () => setSystemState('running'));
 
@@ -289,6 +339,36 @@ export default function App() {
           }
       }, 100);
   }, []);
+
+  const startSaved = async (slot?: string) => {
+    if (startBusy || !v86Loaded) return;
+    setStartBusy(true);
+    setSystemState('loading');
+    setProgress(0);
+    setLoadingLabel(slot ? 'Reading your VM snapshot…' : 'Loading the ready Linux shell…');
+    try {
+      if (slot) {
+        const saved: any = await snapshotStore('readonly', store => store.get(slot));
+        if (!(saved?.state instanceof ArrayBuffer)) throw Error('The snapshot is missing or unreadable.');
+        await startV86([128,256,512].includes(saved.memoryMB) ? saved.memoryMB : ram, saved.state);
+      } else {
+        const metaResponse = await fetch('./quick-start.json');
+        if (!metaResponse.ok) throw Error('Quick Start metadata could not be loaded.');
+        const meta = await metaResponse.json();
+        if (meta.version !== 1 || meta.v86 !== '0.5.471+g94faf3d' || meta.memoryMB !== 128 || !/^[a-f0-9]{64}$/.test(meta.sha256)) throw Error('Incompatible Quick Start snapshot.');
+        const response = await fetch('./quick-start.state.gz');
+        if (!response.ok) throw Error('Quick Start snapshot could not be loaded.');
+        const packed = await response.arrayBuffer();
+        const hash = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', packed)), n => n.toString(16).padStart(2,'0')).join('');
+        if (packed.byteLength !== meta.bytes || hash !== meta.sha256) throw Error('Quick Start snapshot failed its integrity check.');
+        const state = await new Response(new Blob([packed]).stream().pipeThrough(new DecompressionStream('gzip'))).arrayBuffer();
+        await startV86(meta.memoryMB, state);
+      }
+    } catch (error) {
+      setToastMessage((error instanceof Error ? error.message : 'Snapshot could not be loaded.') + ' Normal boot is still available.');
+      setSystemState('dashboard');
+    } finally { setStartBusy(false); }
+  };
 
   const handleStop = () => {
     if(document.pointerLockElement === screenContainerRef.current)document.exitPointerLock();
@@ -338,18 +418,18 @@ export default function App() {
   };
 
   const saveToSlot = async (slot: string) => {
-    const emu=emulatorRef.current;if(!emu || snapshotBusy)return;
+    const emu=emulatorRef.current;if(!emu || snapshotBusy || caseBusy)return;
     setSnapshotBusy(true);setToastMessage('Saving…');
     try { await emu.stop();const state=await emu.save_state();const date=new Date().toLocaleString();
-      await snapshotStore('readwrite', store=>store.put({slot,state,date}));setSaveSlots(prev=>({...prev,[slot]:date}));setToastMessage('Saved to Slot '+slot.replace('save-',''));
+      await snapshotStore('readwrite', store=>store.put({slot,state,date,memoryMB:activeMemory.current}));setSaveSlots(prev=>({...prev,[slot]:date}));setToastMessage('Saved to Slot '+slot.replace('save-',''));
     } catch(error){console.error(error);setToastMessage('Save failed. Existing snapshots are unchanged.');}
     finally { if(emulatorRef.current===emu)await emu.run();setSnapshotBusy(false);setTimeout(()=>setToastMessage(null),3000); }
   };
   const loadFromSlot = async (slot: string) => {
-    const emu=emulatorRef.current;if(!emu || snapshotBusy)return;
+    const emu=emulatorRef.current;if(!emu || snapshotBusy || caseBusy)return;
     setSnapshotBusy(true);setToastMessage('Loading…');
     try { const saved:any=await snapshotStore('readonly',store=>store.get(slot));if(!saved)throw Error('Empty snapshot slot');
-      await emu.stop();await emu.restore_state(saved.state);setToastMessage('Loaded Slot '+slot.replace('save-','')+' — '+saved.date);
+      await emu.stop();await emu.restore_state(saved.state);if([128,256,512].includes(saved.memoryMB)){activeMemory.current=saved.memoryMB;setRam(saved.memoryMB);}setToastMessage('Loaded Slot '+slot.replace('save-','')+' — '+saved.date);
     } catch(error){console.error(error);setToastMessage('Load failed. The snapshot could not be restored.');}
     finally { if(emulatorRef.current===emu)await emu.run();setSnapshotBusy(false);setTimeout(()=>setToastMessage(null),3000); }
   };
@@ -412,16 +492,16 @@ export default function App() {
         className="absolute inset-0 flex flex-col items-center justify-center bg-[#050505] text-slate-300 p-4"
         style={{ display: systemState === 'dashboard' ? 'flex' : 'none' }}
       >
-           <div className="max-w-md w-full bg-[#111] border border-white/10 rounded-xl p-8 shadow-2xl flex flex-col items-center">
-               <div className="w-20 h-20 bg-white/5 rounded-full flex items-center justify-center mb-6 border border-white/10 shadow-[0_0_30px_rgba(255,255,255,0.05)]">
-                    <Monitor className="w-10 h-10 text-slate-300" />
+           <div className="max-w-md w-full max-h-full overflow-y-auto bg-[#111] border border-white/10 rounded-xl p-5 shadow-2xl flex flex-col items-center">
+               <div className="w-12 h-12 shrink-0 bg-white/5 rounded-full flex items-center justify-center mb-3 border border-white/10 shadow-[0_0_30px_rgba(255,255,255,0.05)]">
+                    <Monitor className="w-6 h-6 text-slate-300" />
                </div>
-               <h1 className="text-3xl font-bold text-white mb-2 tracking-tight">v86 Emulator</h1>
-               <p className="text-slate-400 text-center mb-8 text-sm">
+               <h1 className="text-2xl font-bold text-white mb-2 tracking-tight">v86 Emulator</h1>
+               <p className="text-slate-400 text-center mb-4 text-sm">
                    Tiny Core Linux 17.0 — a 32-bit x86 guest running locally in v86.
                </p>
     
-               <div className="w-full mb-8 relative">
+               <div className="w-full mb-4 relative">
                    <label className="text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-3 block text-center">Memory Allocation (RAM)</label>
                    <div className="flex gap-2">
                        {[128, 256, 512].map(m => (
@@ -438,14 +518,22 @@ export default function App() {
 
 
     
+               <button disabled={!v86Loaded || startBusy} onClick={() => startSaved()} className="w-full mb-3 rounded-lg border border-cyan-300/30 bg-cyan-300/10 py-4 text-cyan-100 hover:bg-cyan-300/20 disabled:opacity-40 transition-colors">
+                 <span className="block font-semibold tracking-wider">Quick Start</span>
+                 <span className="mt-1 block text-xs text-cyan-200/65">Ready Linux shell · 128 MB · optional</span>
+               </button>
                <button
-                   disabled={!v86Loaded}
+                   disabled={!v86Loaded || startBusy}
                    onClick={() => startV86(ram)}
-                   className="w-full py-4 bg-white text-black font-bold rounded flex items-center justify-center gap-2 hover:bg-slate-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-sm uppercase tracking-widest"
+                   className="w-full py-3 bg-white text-black font-bold rounded flex items-center justify-center gap-2 hover:bg-slate-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-sm uppercase tracking-widest"
                >
                    <Play className="w-4 h-4 fill-current" />
                    Start Virtual Machine
                </button>
+               {Object.keys(saveSlots).length > 0 && <div className="w-full mt-5 border-t border-white/10 pt-4">
+                 <p className="text-[10px] uppercase tracking-widest text-slate-500 mb-2">Resume your saved VM</p>
+                 <div className="flex gap-2">{[1,2,3].filter(n => saveSlots[`save-${n}`]).map(n => <button key={n} disabled={!v86Loaded || startBusy} onClick={() => startSaved(`save-${n}`)} title={saveSlots[`save-${n}`] || ''} className="flex-1 rounded border border-white/15 py-2 text-xs text-slate-300 hover:bg-white/10 disabled:opacity-40">Start Slot {n}</button>)}</div>
+               </div>}
                <a href={offlineMode ? "./credits.html?offline=1" : "./credits.html"} className="mt-5 text-xs text-slate-400 underline underline-offset-4">Tiny Core Linux · v86 · Credits &amp; licenses</a>
            </div>
       </div>
@@ -461,7 +549,7 @@ export default function App() {
                        <div className="max-w-md w-full flex flex-col items-center">
                            <Cpu className="w-12 h-12 text-slate-500 mb-6 animate-pulse" />
                            <h2 className="text-xl font-bold text-white mb-2 uppercase tracking-widest">Loading System</h2>
-                           <p className="text-slate-500 text-sm mb-8 font-mono">Fetching Virtual Disk Image...</p>
+                           <p className="text-slate-500 text-sm mb-8 font-mono">{loadingLabel}</p>
                            
                            <div className="w-full max-w-xs h-1 bg-white/10 rounded overflow-hidden">
                                <div 
@@ -534,6 +622,7 @@ export default function App() {
                          </div>
                     )}
 
+                    {caseFiles.length === 2 && <button onClick={importCase} disabled={caseBusy || snapshotBusy || systemState !== 'running'} title="At an idle tc@box shell prompt: write auth.log and export.log into /home/tc/nexus-case" className="px-2 py-1.5 rounded border border-cyan-400/30 text-cyan-200 text-xs disabled:opacity-40">{caseBusy ? 'Writing case logs…' : 'Import case logs'}</button>}
                     {/* Compact Save Slots */}
                     <div className="flex flex-1 justify-center sm:justify-start md:justify-center items-center gap-1 sm:gap-2 px-2 shrink">
                          {[1, 2, 3].map(slotNum => {

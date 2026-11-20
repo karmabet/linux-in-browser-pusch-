@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "v86": "0.5.471+g94faf3d",
+  "memoryMB": 128,
+  "guest": "Tiny Core 17.0 / Linux 6.18.2-tinycore / Core CLI",
+  "bytes": 51468573,
+  "sha256": "fa097826534e8dbf48d80d2e2ea1cac75a331d842a8f8f1d3f7fb809a85112f8",
+  "isoSha256": "0539cbcadc241e529c368ffefb2dd63676ea09f2b7a49706f61b81f83889223d",
+  "createdAt": "2026-11-20T18:20:02.293Z"
+}
