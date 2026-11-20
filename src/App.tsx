@@ -22,6 +22,23 @@ async function snapshotStore<T>(mode: IDBTransactionMode, action: (store: IDBObj
 }
 export default function App() {
   const [systemState, setSystemState] = useState<'dashboard' | 'loading' | 'running'>('dashboard');
+  const [caseFiles, setCaseFiles] = useState<{name: string; text: string}[]>([]);
+  const [caseBusy, setCaseBusy] = useState(false);
+  useEffect(() => {
+    const receive = (event: MessageEvent) => {
+      if (window.parent === window || event.source !== window.parent) return;
+      const trusted = ['https://nexushacker.com', 'https://www.nexushacker.com', 'nexus://game'];
+      const local = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(event.origin);
+      if (!trusted.includes(event.origin) && !local) return;
+      const data = event.data;
+      if (data?.type !== 'nexus-case-files' || data.version !== 1 || !Array.isArray(data.files) || data.files.length !== 2) return;
+      if (!data.files.every((f: any) => f && ['auth.log', 'export.log'].includes(f.name) && typeof f.text === 'string' && /^[\x09\x0a\x0d\x20-\x7e]*$/.test(f.text) && f.text.length <= 4096)) return;
+      if (new Set(data.files.map((f: any) => f.name)).size !== 2) return;
+      setCaseFiles(data.files.map((f: any) => ({name: f.name, text: f.text})));
+    };
+    window.addEventListener('message', receive);
+    return () => window.removeEventListener('message', receive);
+  }, []);
   const [snapshotBusy,setSnapshotBusy] = useState(false);
   const bootTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [progress, setProgress] = useState<number>(0);
@@ -45,6 +62,24 @@ export default function App() {
     emu.keyboard_set_status(true);
     try { await emu.keyboard_send_text(text); }
     finally { if(emulatorRef.current===emu)emu.keyboard_set_status(!!screenContainerRef.current?.contains(document.activeElement)); }
+  };
+
+  const importCase = async () => {
+    const vm = emulatorRef.current;
+    if (!vm?.is_running() || caseBusy || snapshotBusy || caseFiles.length !== 2) return;
+    setCaseBusy(true);
+    try {
+      // File contents are base64 data, never interpolated as shell syntax. Paths are fixed.
+      // User must intentionally focus an idle guest shell before pressing this button.
+      const marker = crypto.getRandomValues(new Uint32Array(1))[0].toString(16);
+      const writes = caseFiles.map(file => `printf '%s' '${btoa(file.text)}' | base64 -d > '/home/tc/nexus-case/${file.name}'`).join(' && ');
+      await sendGuestText(`mkdir -p /home/tc/nexus-case && ${writes} && printf '\nCASE_READY_%s\n' '${marker}'
+`);
+      const ok = await vm.wait_until_vga_screen_contains(`CASE_READY_${marker}`, {timeout_msec: 30000});
+      setToastMessage(ok ? 'Case logs written to /home/tc/nexus-case. Use cat and grep to investigate.' : 'Guest did not confirm the write. Open an idle guest terminal and try again.');
+    } catch (error) {
+      console.error(error); setToastMessage('Case import failed. Open an idle guest terminal and try again.');
+    } finally { setCaseBusy(false); }
   };
 
   // Touch gesture refs
@@ -338,7 +373,7 @@ export default function App() {
   };
 
   const saveToSlot = async (slot: string) => {
-    const emu=emulatorRef.current;if(!emu || snapshotBusy)return;
+    const emu=emulatorRef.current;if(!emu || snapshotBusy || caseBusy)return;
     setSnapshotBusy(true);setToastMessage('Saving…');
     try { await emu.stop();const state=await emu.save_state();const date=new Date().toLocaleString();
       await snapshotStore('readwrite', store=>store.put({slot,state,date}));setSaveSlots(prev=>({...prev,[slot]:date}));setToastMessage('Saved to Slot '+slot.replace('save-',''));
@@ -346,7 +381,7 @@ export default function App() {
     finally { if(emulatorRef.current===emu)await emu.run();setSnapshotBusy(false);setTimeout(()=>setToastMessage(null),3000); }
   };
   const loadFromSlot = async (slot: string) => {
-    const emu=emulatorRef.current;if(!emu || snapshotBusy)return;
+    const emu=emulatorRef.current;if(!emu || snapshotBusy || caseBusy)return;
     setSnapshotBusy(true);setToastMessage('Loading…');
     try { const saved:any=await snapshotStore('readonly',store=>store.get(slot));if(!saved)throw Error('Empty snapshot slot');
       await emu.stop();await emu.restore_state(saved.state);setToastMessage('Loaded Slot '+slot.replace('save-','')+' — '+saved.date);
@@ -534,6 +569,7 @@ export default function App() {
                          </div>
                     )}
 
+                    {caseFiles.length === 2 && <button onClick={importCase} disabled={caseBusy || snapshotBusy || systemState !== 'running'} title="At an idle tc@box shell prompt: write auth.log and export.log into /home/tc/nexus-case" className="px-2 py-1.5 rounded border border-cyan-400/30 text-cyan-200 text-xs disabled:opacity-40">{caseBusy ? 'Writing case logs…' : 'Import case logs'}</button>}
                     {/* Compact Save Slots */}
                     <div className="flex flex-1 justify-center sm:justify-start md:justify-center items-center gap-1 sm:gap-2 px-2 shrink">
                          {[1, 2, 3].map(slotNum => {
