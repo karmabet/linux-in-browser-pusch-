@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "mode": "desktop",
+  "v86": "0.5.471+g94faf3d",
+  "memoryMB": 256,
+  "guest": "Tiny Core 17.0 / Linux 6.18.2-tinycore / FLWM desktop",
+  "bytes": 62922081,
+  "sha256": "c0c7297c08d262ea9ff9156c86bce61977e44885ac8962ec72c2c8ae8e2351ef",
+  "isoSha256": "0539cbcadc241e529c368ffefb2dd63676ea09f2b7a49706f61b81f83889223d",
+  "createdAt": "2026-11-21T00:35:14.234Z"
+}
