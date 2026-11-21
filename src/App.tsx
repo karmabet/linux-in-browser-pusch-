@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Play, Square, Maximize, Keyboard, Monitor, Cpu, Save, Clipboard, Network, Globe } from 'lucide-react';
+import { Play, Square, Maximize, Keyboard, Monitor, Cpu, Save, Clipboard, FileDown } from 'lucide-react';
 
 declare global {
   interface Window {
@@ -49,11 +49,13 @@ export default function App() {
   const [ram, setRam] = useState(256);
   const [v86Loaded, setV86Loaded] = useState<boolean>(false);
   const [zoom, setZoom] = useState<number>(1);
+  const [screenSize, setScreenSize] = useState({ width: 800, height: 600 });
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [saveSlots, setSaveSlots] = useState<Record<string, string | null>>({});
   const [isPointerLocked, setIsPointerLocked] = useState(false);
 
   const screenContainerRef = useRef<HTMLDivElement>(null);
+  const viewportRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const textFallbackRef = useRef<HTMLDivElement>(null);
   const mobileInputRef = useRef<HTMLInputElement>(null);
@@ -78,9 +80,26 @@ export default function App() {
       const quote = (value: string) => "'" + value.replaceAll("'", "'\"'\"'") + "'";
       const marker = crypto.getRandomValues(new Uint32Array(1))[0].toString(16);
       const writes = caseFiles.map(file => `printf '%s' ${quote(file.text)} > '/home/tc/nexus-case/${file.name}'`).join(' && ');
-      await sendGuestText(`mkdir -p /home/tc/nexus-case && ${writes} && printf 'CASE_READY_%s\\n' '${marker}'\n`);
-      const ok = await vm.wait_until_vga_screen_contains(`CASE_READY_${marker}`, {timeout_msec: 30000});
-      setToastMessage(ok ? 'Case logs written to /home/tc/nexus-case. Use cat and grep to investigate.' : 'Guest did not confirm the write. Open an idle guest terminal and try again.');
+      // An X terminal is drawn as pixels, not VGA text. Confirm real guest completion
+      // through its serial device so desktop and text terminals use the same receipt.
+      let serial = '';
+      let confirm!: (ok: boolean) => void;
+      const receipt = new Promise<boolean>(resolve => { confirm = resolve; });
+      const onByte = (byte: number) => {
+        serial = (serial + String.fromCharCode(byte)).slice(-256);
+        if (serial.includes(`CASE_READY_${marker}`)) confirm(true);
+      };
+      vm.add_listener('serial0-output-byte', onByte);
+      let timeout: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await sendGuestText(`mkdir -p /home/tc/nexus-case && ${writes} && printf 'CASE_READY_%s\\n' '${marker}' | sudo tee /dev/ttyS0\n`);
+        timeout = setTimeout(() => confirm(false), 30000);
+        const ok = await receipt;
+        setToastMessage(ok ? 'Case logs written to /home/tc/nexus-case. Use cat and grep to investigate.' : 'Guest did not confirm the write. Open an idle guest terminal and try again.');
+      } finally {
+        clearTimeout(timeout);
+        vm.remove_listener('serial0-output-byte', onByte);
+      }
     } catch (error) {
       console.error(error); setToastMessage('Case import failed. Open an idle guest terminal and try again.');
     } finally { setCaseBusy(false); }
@@ -189,28 +208,28 @@ export default function App() {
     return () => clearInterval(checkV86);
   }, []);
 
-  // Recalculate zoom whenever running state changes or resize
+  // Fit the actual guest mode into the available viewport, including snapshot restore
+  // and Nexus window resizing. The guest can change resolution without a page resize.
   useEffect(() => {
      const handleResize = () => {
-         if (systemState !== 'dashboard') {
-             const toolbarHeight = 56; // 14 Tailwind units = 56px
-             const maxW = window.innerWidth;
-             const maxH = window.innerHeight - toolbarHeight;
-             
-             // Base VM resolution is 800x600
-             const scaleX = maxW / 800;
-             const scaleY = maxH / 600;
-             let newZoom = Math.min(scaleX, scaleY);
-             
-             // Leave a 2% buffer so it doesn't touch the absolute pixel edges perfectly
-             setZoom(newZoom * 0.98);
+         const viewport = viewportRef.current;
+         const canvas = canvasRef.current;
+         if (systemState === 'dashboard' || !viewport || !canvas) return;
+         const graphical = getComputedStyle(canvas).display !== 'none';
+         const width = graphical ? canvas.width || 800 : 800;
+         const height = graphical ? canvas.height || 600 : 600;
+         setScreenSize(prev => prev.width === width && prev.height === height ? prev : { width, height });
+         if (viewport.clientWidth > 0 && viewport.clientHeight > 0) {
+           setZoom(Math.min(viewport.clientWidth / width, viewport.clientHeight / height) * 0.98);
          }
      };
-     
+     const resize = new ResizeObserver(handleResize);
+     if (viewportRef.current) resize.observe(viewportRef.current);
+     const mode = new MutationObserver(handleResize);
+     if (canvasRef.current) mode.observe(canvasRef.current, { attributes: true, attributeFilter: ['width', 'height', 'style'] });
      window.addEventListener('resize', handleResize);
-     handleResize(); // Initial call
-
-     return () => window.removeEventListener('resize', handleResize);
+     handleResize();
+     return () => { resize.disconnect(); mode.disconnect(); window.removeEventListener('resize', handleResize); };
   }, [systemState, isFullscreen]);
 
   // Full screen tracking
@@ -340,23 +359,24 @@ export default function App() {
       }, 100);
   }, []);
 
-  const startSaved = async (slot?: string) => {
+  const startSaved = async (slot?: string, mode: 'desktop' | 'terminal' = 'desktop') => {
     if (startBusy || !v86Loaded) return;
     setStartBusy(true);
     setSystemState('loading');
     setProgress(0);
-    setLoadingLabel(slot ? 'Reading your VM snapshot…' : 'Loading the ready Linux shell…');
+    setLoadingLabel(slot ? 'Reading your VM snapshot…' : mode === 'desktop' ? 'Restoring the Linux desktop…' : 'Restoring the Linux terminal…');
     try {
       if (slot) {
         const saved: any = await snapshotStore('readonly', store => store.get(slot));
         if (!(saved?.state instanceof ArrayBuffer)) throw Error('The snapshot is missing or unreadable.');
         await startV86([128,256,512].includes(saved.memoryMB) ? saved.memoryMB : ram, saved.state);
       } else {
-        const metaResponse = await fetch('./quick-start.json');
+        const basename = mode === 'desktop' ? 'quick-start-desktop' : 'quick-start';
+        const metaResponse = await fetch(`./${basename}.json`);
         if (!metaResponse.ok) throw Error('Quick Start metadata could not be loaded.');
         const meta = await metaResponse.json();
-        if (meta.version !== 1 || meta.v86 !== '0.5.471+g94faf3d' || meta.memoryMB !== 128 || !/^[a-f0-9]{64}$/.test(meta.sha256)) throw Error('Incompatible Quick Start snapshot.');
-        const response = await fetch('./quick-start.state.gz');
+        if (meta.version !== 1 || meta.mode !== mode || meta.v86 !== '0.5.471+g94faf3d' || meta.memoryMB !== (mode === 'desktop' ? 256 : 128) || !/^[a-f0-9]{64}$/.test(meta.sha256)) throw Error('Incompatible Quick Start snapshot.');
+        const response = await fetch(`./${basename}.state.gz`);
         if (!response.ok) throw Error('Quick Start snapshot could not be loaded.');
         const packed = await response.arrayBuffer();
         const hash = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', packed)), n => n.toString(16).padStart(2,'0')).join('');
@@ -434,26 +454,6 @@ export default function App() {
     finally { if(emulatorRef.current===emu)await emu.run();setSnapshotBusy(false);setTimeout(()=>setToastMessage(null),3000); }
   };
 
-  const setupNetwork = () => {
-      if (!emulatorRef.current || offlineMode) return;
-      canvasRef.current?.focus();
-      setTimeout(() => {
-          emulatorRef.current.keyboard_send_text("sudo udhcpc\n");
-          setToastMessage("Network setup command sent");
-          setTimeout(() => setToastMessage(null), 3000);
-      }, 200);
-  };
-
-  const installBrowser = () => {
-      if (!emulatorRef.current) return;
-      canvasRef.current?.focus();
-      setTimeout(() => {
-          emulatorRef.current.keyboard_send_text("tce-load -wi links && clear && links https://google.com\n");
-          setToastMessage("Browser command sent to the guest terminal.");
-          setTimeout(() => setToastMessage(null), 3000);
-      }, 200);
-  };
-
   const handlePaste = async () => {
       if (!emulatorRef.current) return;
       try {
@@ -518,10 +518,13 @@ export default function App() {
 
 
     
-               <button disabled={!v86Loaded || startBusy} onClick={() => startSaved()} className="w-full mb-3 rounded-lg border border-cyan-300/30 bg-cyan-300/10 py-4 text-cyan-100 hover:bg-cyan-300/20 disabled:opacity-40 transition-colors">
-                 <span className="block font-semibold tracking-wider">Quick Start</span>
-                 <span className="mt-1 block text-xs text-cyan-200/65">Ready Linux shell · 128 MB · optional</span>
-               </button>
+               <div className="w-full mb-3 overflow-hidden rounded-lg border border-white bg-white text-zinc-950">
+                 <div className="px-4 py-2 text-center text-xs text-zinc-500">Ready Linux sessions · optional</div>
+                 <div className="grid grid-cols-2 border-t border-black/10">
+                   <button aria-label="Quick Start Desktop" disabled={!v86Loaded || startBusy} onClick={() => startSaved(undefined, 'desktop')} className="px-3 py-3 text-sm font-semibold hover:bg-slate-100 disabled:opacity-40 transition-colors border-r border-black/10"><span className="block">Quick Start Desktop</span><span className="mt-1 block text-[10px] font-normal text-zinc-500">256 MB</span></button>
+                   <button aria-label="Quick Start Terminal" disabled={!v86Loaded || startBusy} onClick={() => startSaved(undefined, 'terminal')} className="px-3 py-3 text-sm font-semibold hover:bg-slate-100 disabled:opacity-40 transition-colors"><span className="block">Quick Start Terminal</span><span className="mt-1 block text-[10px] font-normal text-zinc-500">128 MB</span></button>
+                 </div>
+               </div>
                <button
                    disabled={!v86Loaded || startBusy}
                    onClick={() => startV86(ram)}
@@ -563,10 +566,10 @@ export default function App() {
                )}
         
                {/* VM Container */}
-               <div className="flex-1 flex items-center justify-center overflow-hidden w-full relative">
+               <div ref={viewportRef} data-vm-viewport className="flex-1 min-h-0 flex items-center justify-center overflow-hidden w-full relative">
                    {/* Explicit CSS transform wrapper handles perfect scaling mapped to original pixel tracking */}
-                   <div style={{ width: 800 * zoom, height: 600 * zoom, position: 'relative' }}>
-                       <div ref={screenContainerRef} tabIndex={0} onClick={handleCanvasClick} onFocus={() => emulatorRef.current?.keyboard_set_status(true)} onBlur={() => emulatorRef.current?.keyboard_set_status(false)} onContextMenu={event => event.preventDefault()} className="absolute top-0 left-0 overflow-hidden" style={{ transform: `scale(${zoom})`, transformOrigin: 'top left', width: 800, height: 600, backgroundColor: '#000' }}>
+                   <div data-vm-screen style={{ width: screenSize.width * zoom, height: screenSize.height * zoom, position: 'relative', flexShrink: 0 }}>
+                       <div ref={screenContainerRef} tabIndex={0} onClick={handleCanvasClick} onFocus={() => emulatorRef.current?.keyboard_set_status(true)} onBlur={() => emulatorRef.current?.keyboard_set_status(false)} onContextMenu={event => event.preventDefault()} className="absolute top-0 left-0 overflow-hidden" style={{ transform: `scale(${zoom})`, transformOrigin: 'top left', width: screenSize.width, height: screenSize.height, backgroundColor: '#000' }}>
                            <div ref={textFallbackRef} className="absolute inset-0 whitespace-pre font-mono text-slate-300 pointer-events-none overflow-hidden" style={{ fontSize: '14px', lineHeight: '14px' }}></div>
                            <canvas 
                                ref={canvasRef} 
@@ -580,15 +583,15 @@ export default function App() {
                                style={{ touchAction: 'none' }}
                            ></canvas>
                            
-                           {systemState === 'running' && !isPointerLocked && (
-                               <div className="absolute inset-x-0 bottom-4 pointer-events-none flex justify-center z-10">
-                                   <div className="bg-black/80 backdrop-blur text-white px-4 py-2 rounded-full text-xs font-mono border border-white/20 shadow-xl" style={{ transform: `scale(${1/zoom})` }}>
-                                       Click to capture mouse — Press ESC to release
-                                   </div>
-                               </div>
-                           )}
                        </div>
                    </div>
+                   {systemState === 'running' && !isPointerLocked && (
+                     <div className="absolute top-2 inset-x-2 pointer-events-none flex justify-center z-10">
+                       <div className="bg-black/70 backdrop-blur text-slate-300 px-3 py-1 rounded border border-white/10 text-[10px] font-mono">
+                         Click to capture mouse · Esc to release
+                       </div>
+                     </div>
+                   )}
                </div>
         
                {/* Toolbar */}
@@ -598,31 +601,7 @@ export default function App() {
                          {offlineMode ? "VM Running · Offline" : "VM Running"}
                     </div>
 
-                    {systemState === 'running' && !offlineMode && (
-                         <div className="flex items-center group ml-2 shrink-0 gap-1 sm:gap-2">
-                              <button 
-                                  onClick={setupNetwork}
-                                  className="px-2 py-1.5 bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white rounded border border-white/10 text-[10px] sm:text-xs font-mono transition-colors flex items-center gap-1.5"
-                                  title="Setup Internet Connection"
-                              >
-                                  <Network className="w-3.5 h-3.5" /> 
-                                  <span className="hidden sm:inline">Connect Net</span>
-                              </button>
-                              
-                              <button 
-                                  onClick={installBrowser}
-                                  className="px-2 py-1.5 bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white rounded border border-white/10 text-[10px] sm:text-xs font-mono transition-colors flex items-center gap-1.5"
-                                  title="Install Links Browser"
-                              >
-                                  <Globe className="w-3.5 h-3.5" /> 
-                                  <span className="hidden sm:inline">Install Browser</span>
-                              </button>
-
-
-                         </div>
-                    )}
-
-                    {caseFiles.length === 2 && <button onClick={importCase} disabled={caseBusy || snapshotBusy || systemState !== 'running'} title="At an idle tc@box shell prompt: write auth.log and export.log into /home/tc/nexus-case" className="px-2 py-1.5 rounded border border-cyan-400/30 text-cyan-200 text-xs disabled:opacity-40">{caseBusy ? 'Writing case logs…' : 'Import case logs'}</button>}
+                    {caseFiles.length === 2 && <button onClick={importCase} disabled={caseBusy || snapshotBusy || systemState !== 'running'} title="At an idle tc@box shell prompt: write auth.log and export.log into /home/tc/nexus-case" className="inline-flex items-center gap-1.5 px-2 py-1.5 rounded border border-white/15 bg-white/5 text-slate-200 hover:bg-white/10 text-xs disabled:opacity-40"><FileDown className="w-3.5 h-3.5" />{caseBusy ? 'Writing case logs…' : 'Import case logs'}</button>}
                     {/* Compact Save Slots */}
                     <div className="flex flex-1 justify-center sm:justify-start md:justify-center items-center gap-1 sm:gap-2 px-2 shrink">
                          {[1, 2, 3].map(slotNum => {
