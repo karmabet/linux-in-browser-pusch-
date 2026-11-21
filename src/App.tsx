@@ -492,7 +492,7 @@ export default function App() {
         className="absolute inset-0 flex flex-col items-center justify-center bg-[#050505] text-slate-300 p-4"
         style={{ display: systemState === 'dashboard' ? 'flex' : 'none' }}
       >
-           <div className="max-w-md w-full max-h-full overflow-y-auto bg-[#111] border border-white/10 rounded-xl p-5 shadow-2xl flex flex-col items-center">
+           <div className="max-w-md w-full max-h-full overflow-y-auto bg-[#111] border border-white/10 rounded-xl p-5 shadow-2xl flex flex-col items-center [&>*]:shrink-0">
                <div className="w-12 h-12 shrink-0 bg-white/5 rounded-full flex items-center justify-center mb-3 border border-white/10 shadow-[0_0_30px_rgba(255,255,255,0.05)]">
                     <Monitor className="w-6 h-6 text-slate-300" />
                </div>
