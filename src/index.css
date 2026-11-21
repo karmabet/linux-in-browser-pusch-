@@ -1,5 +1,12 @@
 @import "tailwindcss";
 
+/* The fitted VM wrapper owns scaling. Override v86's extra inline CSS scale at
+   fractional display densities without changing its real framebuffer size. */
+[data-vm-screen] canvas {
+  width: 100% !important;
+  height: 100% !important;
+}
+
 canvas:-webkit-full-screen {
   width: 100vw !important;
   height: 100vh !important;
