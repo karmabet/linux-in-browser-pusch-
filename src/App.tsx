@@ -53,6 +53,8 @@ export default function App() {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [saveSlots, setSaveSlots] = useState<Record<string, string | null>>({});
   const [isPointerLocked, setIsPointerLocked] = useState(false);
+  const [absolutePointer, setAbsolutePointer] = useState(false);
+  const absolutePointerReady = useRef(false);
 
   const screenContainerRef = useRef<HTMLDivElement>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
@@ -242,7 +244,9 @@ export default function App() {
   // Pointer lock tracking
   useEffect(() => {
      const handlePointerLockChange = () => {
-         setIsPointerLocked(document.pointerLockElement === screenContainerRef.current);
+         const locked = document.pointerLockElement === screenContainerRef.current;
+         setIsPointerLocked(locked);
+         if (absolutePointerReady.current) emulatorRef.current?.mouse_set_status(locked);
      };
      document.addEventListener('pointerlockchange', handlePointerLockChange);
      return () => document.removeEventListener('pointerlockchange', handlePointerLockChange);
@@ -272,21 +276,37 @@ export default function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  const handleCanvasClick = async () => {
-    if (emulatorRef.current && systemState === 'running') {
-        emulatorRef.current.keyboard_set_status(true);
-        screenContainerRef.current?.focus();
-        if (!isPointerLocked) {
-            try {
-                await screenContainerRef.current?.requestPointerLock();
-            } catch (e) {
-                console.error("Pointer lock failed:", e);
-            }
-        }
+  const toggleMouseCapture = async () => {
+    const screen = screenContainerRef.current;
+    if (!screen || systemState !== 'running') return;
+    if (document.pointerLockElement === screen) {
+      document.exitPointerLock();
+      return;
+    }
+    screen.focus({ preventScroll: true });
+    try {
+      await screen.requestPointerLock();
+    } catch {
+      setToastMessage('Mouse capture is unavailable in this browser window.');
     }
   };
 
+  const sendAbsolutePointer = (event: React.PointerEvent<HTMLCanvasElement>, state?: number) => {
+    if (!absolutePointerReady.current || document.pointerLockElement || event.pointerType === 'touch') return;
+    const canvas = event.currentTarget;
+    const bounds = canvas.getBoundingClientRect();
+    if (!bounds.width || !bounds.height) return;
+    const x = Math.max(0, Math.min(canvas.width - 1, Math.floor((event.clientX - bounds.left) * canvas.width / bounds.width)));
+    const y = Math.max(0, Math.min(canvas.height - 1, Math.floor((event.clientY - bounds.top) * canvas.height / bounds.height)));
+    const button = state === undefined ? 0 : [1, 2, 3][event.button];
+    if (button === undefined) return;
+    if (state === 1) canvas.setPointerCapture(event.pointerId);
+    emulatorRef.current?.serial0_send(`${x} ${y} ${button} ${state ?? 0}\n`);
+  };
+
   const startV86 = useCallback(async (memory: number, initialState?: ArrayBuffer) => {
+      absolutePointerReady.current = false;
+      setAbsolutePointer(false);
       if (!window.V86) {
           console.error("V86 not loaded. Cannot start virtual machine.");
           return;
@@ -324,6 +344,20 @@ export default function App() {
               emulatorRef.current = new window.V86(v86Config);
 
               const emu = emulatorRef.current;
+              let pointerReply = '';
+              emu.add_listener('serial0-output-byte', (byte: number) => {
+                  if (emulatorRef.current !== emu) return;
+                  if (byte !== 10) {
+                      pointerReply = (pointerReply + String.fromCharCode(byte)).slice(-128);
+                      return;
+                  }
+                  if (pointerReply.trim() === 'READY' && matchMedia('(any-pointer: fine)').matches) {
+                      absolutePointerReady.current = true;
+                      setAbsolutePointer(true);
+                      emu.mouse_set_status(document.pointerLockElement === screenContainerRef.current);
+                  }
+                  pointerReply = '';
+              });
 
               emu.add_listener("download-progress", (e: any) => {
                   console.log("Loading:", e);
@@ -339,7 +373,7 @@ export default function App() {
               });
               emu.add_listener("emulator-ready", async () => {
                   try {
-                    if (initialState) { await emu.restore_state(initialState); await emu.run(); }
+                    if (initialState) { await emu.restore_state(initialState); await emu.run(); emu.serial0_send('PING\n'); }
                     emu.keyboard_set_status(screenContainerRef.current?.contains(document.activeElement));
                     setSystemState('running');
                   } catch (error) {
@@ -569,7 +603,7 @@ export default function App() {
                <div ref={viewportRef} data-vm-viewport className="flex-1 min-h-0 flex items-center justify-center overflow-hidden w-full relative">
                    {/* Explicit CSS transform wrapper handles perfect scaling mapped to original pixel tracking */}
                    <div data-vm-screen style={{ width: screenSize.width * zoom, height: screenSize.height * zoom, position: 'relative', flexShrink: 0 }}>
-                       <div ref={screenContainerRef} tabIndex={0} onClick={handleCanvasClick} onFocus={() => emulatorRef.current?.keyboard_set_status(true)} onBlur={() => emulatorRef.current?.keyboard_set_status(false)} onContextMenu={event => event.preventDefault()} className="absolute top-0 left-0 overflow-hidden" style={{ transform: `scale(${zoom})`, transformOrigin: 'top left', width: screenSize.width, height: screenSize.height, backgroundColor: '#000' }}>
+                       <div ref={screenContainerRef} tabIndex={0} onPointerDown={() => screenContainerRef.current?.focus({ preventScroll: true })} onFocus={() => emulatorRef.current?.keyboard_set_status(true)} onBlur={() => emulatorRef.current?.keyboard_set_status(false)} onContextMenu={event => event.preventDefault()} className="absolute top-0 left-0 overflow-hidden" style={{ transform: `scale(${zoom})`, transformOrigin: 'top left', width: screenSize.width, height: screenSize.height, backgroundColor: '#000' }}>
                            <div ref={textFallbackRef} className="absolute inset-0 whitespace-pre font-mono text-slate-300 pointer-events-none overflow-hidden" style={{ fontSize: '14px', lineHeight: '14px' }}></div>
                            <canvas 
                                ref={canvasRef} 
@@ -578,17 +612,19 @@ export default function App() {
                                onTouchMove={handleTouchMove}
                                onTouchEnd={handleTouchEnd}
                                onTouchCancel={handleTouchEnd}
-                               className="block absolute inset-0 w-full h-full cursor-crosshair focus:outline-none" 
-                               tabIndex={0} 
-                               style={{ touchAction: 'none' }}
+                               onPointerMove={event => sendAbsolutePointer(event)}
+                               onPointerDown={event => sendAbsolutePointer(event, 1)}
+                               onPointerUp={event => sendAbsolutePointer(event, 0)}
+                               style={{ touchAction: 'none', cursor: absolutePointer ? 'none' : undefined }}
+                               className="block absolute inset-0 w-full h-full"
                            ></canvas>
                            
                        </div>
                    </div>
-                   {systemState === 'running' && !isPointerLocked && (
+                   {isPointerLocked && (
                      <div className="absolute top-2 inset-x-2 pointer-events-none flex justify-center z-10">
                        <div className="bg-black/70 backdrop-blur text-slate-300 px-3 py-1 rounded border border-white/10 text-[10px] font-mono">
-                         Click to capture mouse · Esc to release
+                         Mouse captured · Esc to release
                        </div>
                      </div>
                    )}
@@ -631,6 +667,10 @@ export default function App() {
                     </div>
                     
                     <div className="flex items-center gap-1 shrink-0">
+                         <button type="button" onClick={toggleMouseCapture} disabled={systemState !== 'running'} aria-pressed={isPointerLocked} title="Capture mouse · Esc to release" className="p-2 rounded hover:bg-white/10 text-slate-400 hover:text-white disabled:opacity-40">
+                             <Monitor className="w-4 h-4" aria-hidden="true" />
+                             <span className="sr-only">Capture mouse</span>
+                         </button>
                          <button onClick={handlePaste} className="p-2 sm:p-2.5 rounded hover:bg-white/10 text-slate-400 hover:text-white transition-colors" title="Paste">
                              <Clipboard className="w-4 h-4 sm:w-5 sm:h-5" />
                          </button>
