@@ -316,7 +316,7 @@ export default function App() {
       setRam(memory);
       setLoadingLabel(initialState ? 'Restoring saved machine state…' : 'Fetching virtual disk image…');
       setSystemState('loading');
-      setProgress(0);
+      if (!initialState) setProgress(0);
       
       bootTimer.current = setTimeout(() => {
           if (!screenContainerRef.current) return;
@@ -363,7 +363,7 @@ export default function App() {
                   console.log("Loading:", e);
                   if (e && typeof e.loaded === 'number' && e.total > 0) {
                       const p = Math.min(100, Math.round((e.loaded / e.total) * 100));
-                      setProgress(p);
+                      if (!initialState) setProgress(p);
 
                   }
               });
@@ -398,7 +398,7 @@ export default function App() {
     setStartBusy(true);
     setSystemState('loading');
     setProgress(0);
-    setLoadingLabel(slot ? 'Reading your VM snapshot…' : mode === 'desktop' ? 'Restoring the Linux desktop…' : 'Restoring the Linux terminal…');
+    setLoadingLabel(slot ? 'Reading your VM snapshot…' : 'Preparing Quick Start…');
     try {
       if (slot) {
         const saved: any = await snapshotStore('readonly', store => store.get(slot));
@@ -409,13 +409,37 @@ export default function App() {
         const metaResponse = await fetch(`./${basename}.json`);
         if (!metaResponse.ok) throw Error('Quick Start metadata could not be loaded.');
         const meta = await metaResponse.json();
-        if (meta.version !== 1 || meta.mode !== mode || meta.v86 !== '0.5.471+g94faf3d' || meta.memoryMB !== (mode === 'desktop' ? 256 : 128) || !/^[a-f0-9]{64}$/.test(meta.sha256)) throw Error('Incompatible Quick Start snapshot.');
+        if (meta.version !== 1 || meta.mode !== mode || meta.v86 !== '0.5.471+g94faf3d' || meta.memoryMB !== (mode === 'desktop' ? 256 : 128) || !Number.isSafeInteger(meta.bytes) || meta.bytes <= 0 || !/^[a-f0-9]{64}$/.test(meta.sha256)) throw Error('Incompatible Quick Start snapshot.');
+        setLoadingLabel(mode === 'desktop' ? 'Downloading the Linux desktop…' : 'Downloading the Linux terminal…');
         const response = await fetch(`./${basename}.state.gz`);
-        if (!response.ok) throw Error('Quick Start snapshot could not be loaded.');
-        const packed = await response.arrayBuffer();
-        const hash = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', packed)), n => n.toString(16).padStart(2,'0')).join('');
-        if (packed.byteLength !== meta.bytes || hash !== meta.sha256) throw Error('Quick Start snapshot failed its integrity check.');
-        const state = await new Response(new Blob([packed]).stream().pipeThrough(new DecompressionStream('gzip'))).arrayBuffer();
+        if (!response.ok || !response.body) throw Error('Quick Start snapshot could not be loaded.');
+        let bytesRead = 0;
+        let shownProgress = 0;
+        const measured = response.body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
+          transform(chunk, controller) {
+            bytesRead += chunk.byteLength;
+            if (bytesRead > meta.bytes) throw Error('Quick Start snapshot exceeded its expected size.');
+            const percent = Math.floor(bytesRead * 100 / meta.bytes);
+            if (percent !== shownProgress) {
+              shownProgress = percent;
+              setProgress(percent);
+            }
+            controller.enqueue(chunk);
+          },
+          flush() {
+            setLoadingLabel('Verifying the downloaded snapshot…');
+          },
+        }));
+        const [integrityStream, compressedStream] = measured.tee();
+        const verified = new Response(integrityStream).arrayBuffer().then(async packed => {
+          const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', packed));
+          const hash = Array.from(digest, byte => byte.toString(16).padStart(2, '0')).join('');
+          if (packed.byteLength !== meta.bytes || hash !== meta.sha256) throw Error('Quick Start snapshot failed its integrity check.');
+        });
+        const [state] = await Promise.all([
+          new Response(compressedStream.pipeThrough(new DecompressionStream('gzip'))).arrayBuffer(),
+          verified,
+        ]);
         await startV86(meta.memoryMB, state);
       }
     } catch (error) {
@@ -586,15 +610,15 @@ export default function App() {
                        <div className="max-w-md w-full flex flex-col items-center">
                            <Cpu className="w-12 h-12 text-slate-500 mb-6 animate-pulse" />
                            <h2 className="text-xl font-bold text-white mb-2 uppercase tracking-widest">Loading System</h2>
-                           <p className="text-slate-500 text-sm mb-8 font-mono">{loadingLabel}</p>
+                           <p role="status" className="text-slate-400 text-sm mb-8 font-mono">{loadingLabel}</p>
                            
                            <div className="w-full max-w-xs h-1 bg-white/10 rounded overflow-hidden">
                                <div 
-                                   className="h-full bg-white transition-all duration-300 ease-out shadow-[0_0_10px_rgba(255,255,255,0.5)]"
-                                   style={{ width: `${progress}%` }}
+                                   className={`h-full bg-white transition-all duration-300 ease-out ${progress === 0 ? 'opacity-40 motion-safe:animate-pulse' : ''}`}
+                                   style={{ width: progress === 0 ? '16%' : `${progress}%` }}
                                />
                            </div>
-                           <div className="mt-4 text-xs font-mono text-slate-400">{progress}%</div>
+                           {progress > 0 && progress < 100 && <div className="mt-4 text-xs font-mono text-slate-400">{progress}% downloaded</div>}
                        </div>
                    </div>
                )}
