@@ -6,6 +6,17 @@
     <title>CoreLinux - Browser OS</title>
     <meta name="description" content="CoreLinux running entirely in your browser using WebAssembly. Experience a full Linux OS locally." />
     <script src="./v86/libv86.js"></script>
+    <style>
+      /* NexusHacker: darken the start screen (session panel + start button) to match the dark shell. */
+      div.bg-white { background-color: #18181b !important; }
+      .border-white { border-color: #3f3f46 !important; }
+      button.bg-white { background-color: #27272a !important; border: 1px solid #52525b !important; }
+      .text-black { color: #f4f4f5 !important; }
+      div.bg-white, div.bg-white *:not(a) { color: #d4d4d8 !important; }
+      .hover\:bg-slate-100:hover, .hover\:bg-slate-200:hover,
+      .hover\:bg-gray-100:hover, .hover\:bg-gray-200:hover,
+      .hover\:bg-zinc-100:hover, .hover\:bg-zinc-200:hover { background-color: #3f3f46 !important; }
+    </style>
   </head>
   <body>
     <div id="root"></div>
